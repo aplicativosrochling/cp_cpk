@@ -1127,7 +1127,7 @@ body{
       <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor"><path d="M1 1h5v6H1V1zm7 0h4v3H8V1zM1 9h5v3H1V9zm7-3h4v6H8V6z"/></svg>
       Dashboard
     </button>
-    <button class="nav-tab" onclick="showPage('analysis',this)">
+    <button class="nav-tab" onclick="newStudy(this)">
       <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor"><path d="M1 10h2V7H1v3zm3 0h2V4H4v6zm3 0h2V1H7v9zm3 0h2V5h-2v5z"/></svg>
       Novo Estudo
     </button>
@@ -1443,7 +1443,8 @@ body{
           <div class="field">
             <div class="lbl">Modo</div>
             <select id="simTolMode" onchange="simToggleTolMode();simPreview()" style="height:32px;font-size:11px">
-              <option value="bilateral">+/- Bilateral</option>
+              <option value="bilateral">+/- Bilateral (simétrica)</option>
+              <option value="asymmetric">+a / -b Assimétrica</option>
               <option value="amplitude">Amplitude IT</option>
               <option value="manual">LSL / USL manual</option>
               <option value="usl_only">So USL</option>
@@ -1457,6 +1458,21 @@ body{
           <div class="field">
             <div class="lbl lbl-req">Variacao (+/-)</div>
             <input type="number" id="simTol" step="any" placeholder="Ex: 0.3" oninput="simPreview()"/>
+          </div>
+        </div>
+        <div id="simPanAsym" style="display:none;margin-bottom:8px">
+          <div class="row2">
+            <div class="field">
+              <div class="lbl lbl-req">Tolerância superior (+)</div>
+              <input type="number" id="simTolUp" step="any" placeholder="Ex: 0.15" oninput="simPreview()"/>
+            </div>
+            <div class="field">
+              <div class="lbl lbl-req">Tolerância inferior (-)</div>
+              <input type="number" id="simTolDown" step="any" placeholder="Ex: 0.05" oninput="simPreview()"/>
+            </div>
+          </div>
+          <div style="font-size:9.5px;color:var(--t2);margin-top:4px;line-height:1.4">
+            Ex: 25.03 +0.15/-0.05 → LSL=24.98, USL=25.18. Informe os dois valores como positivos.
           </div>
         </div>
         <div id="simPanAmplitude" style="display:none;margin-bottom:8px">
@@ -2342,250 +2358,289 @@ function setChartHeight(areaId, h){
 }
 
 /* ── HISTOGRAM (Minitab-style — escala linear pura) ── */
-function renderHistogram(st, arr){
+/* ═══════════════════════════════════════════════════════════
+   RENDER HISTOGRAM — Versão CORRIGIDA com eixo X contínuo
+   (barras desenhadas via plugin, escala linear, limites corretos)
+═══════════════════════════════════════════════════════════ */
+function renderHistogram(st, arr) {
   const ctx = document.getElementById('cHist').getContext('2d');
-  if(CH.hist){CH.hist.destroy(); CH.hist=null;}
-  setChartHeight('aHist', Math.max(315, chartHeight(arr.length)));
-
-  const lsl = S.lsl, usl = S.usl, specType = S.specType;
+  if (CH.hist) { CH.hist.destroy(); CH.hist = null; }
   const n = arr.length;
-  const sorted = [...arr].sort((a,b)=>a-b);
+  if (n === 0) return;
+  // Altura adaptativa
+  const h = Math.max(280, chartHeight(n));
+  setChartHeight('aHist', h);
+  const lsl = S.lsl, usl = S.usl, specType = S.specType, target = S.target;
   const finite = v => v != null && isFinite(v);
+  const sorted = [...arr].sort((a, b) => a - b);
+
+  // Função quantil
   const quantile = p => {
-    if(!sorted.length) return NaN;
+    if (!sorted.length) return NaN;
     const pos = (sorted.length - 1) * p;
-    const lo = Math.floor(pos), hi = Math.ceil(pos);
+    const lo = Math.floor(pos);
+    const hi = Math.ceil(pos);
     return lo === hi ? sorted[lo] : sorted[lo] + (sorted[hi] - sorted[lo]) * (pos - lo);
   };
-  const floorStep = (v, step) => Math.floor((v / step) + 1e-10) * step;
-  const ceilStep  = (v, step) => Math.ceil ((v / step) - 1e-10) * step;
-  const niceCandidates = raw => {
-    if(!isFinite(raw) || raw <= 0) raw = Math.pow(10, -Math.max(DEC, 0));
-    const exp0 = Math.floor(Math.log10(raw));
-    const bases = [1, 1.25, 2, 2.5, 5, 10];
-    const out = [];
-    for(let e = exp0 - 2; e <= exp0 + 2; e++){
-      bases.forEach(b => out.push(b * Math.pow(10, e)));
-    }
-    return [...new Set(out.filter(v => isFinite(v) && v > 0).map(v => +v.toPrecision(12)))]
-      .sort((a,b)=>a-b);
-  };
-  const niceStep = raw => {
-    const c = niceCandidates(raw);
-    return c.reduce((best, v) => Math.abs(v - raw) < Math.abs(best - raw) ? v : best, c[0]);
-  };
+  // Número de classes baseado no tamanho da amostra (estilo Q-DAS)
+  let targetBins;
+  if (n < 30) targetBins = 7;
+  else if (n < 60) targetBins = 9;
+  else if (n < 100) targetBins = 11;
+  else if (n < 200) targetBins = 13;
+  else if (n < 500) targetBins = 17;
+  else targetBins = 21;
 
-  /* ── Classes profissionais: Minitab/Q-DAS usam classes igualmente espaçadas.
-     A largura combina Freedman-Diaconis, Scott e alvo visual por N; depois
-     escolhe cortes legíveis (1-1.25-2-2.5-5-10) que mantêm densidade SPC. */
-  const dataRange = Math.max(st.mx - st.mn, Math.pow(10, -DEC));
-  const q1 = quantile(0.25), q3 = quantile(0.75);
-  const iqr = Math.max(q3 - q1, 0);
-  const bwFD = iqr > 0 ? 2 * iqr / Math.cbrt(n) : Infinity;
-  const bwScott = st.s > 0 ? 3.49 * st.s / Math.cbrt(n) : Infinity;
-  const targetBins = n < 30 ? 7 : n < 60 ? 9 : n < 120 ? 12 : n < 250 ? 15 : n < 600 ? 18 : 22;
-  const minBins = n < 30 ? 5 : n < 60 ? 7 : n < 120 ? 9 : 11;
-  const maxBins = n < 30 ? 12 : n < 120 ? 18 : n < 250 ? 22 : 28;
-  const rawWidths = [bwFD, bwScott, dataRange / targetBins, dataRange / Math.max(6, Math.ceil(Math.sqrt(n)))]
-    .filter(v => isFinite(v) && v > 0);
-  const bwBase = rawWidths.length ? rawWidths.sort((a,b)=>a-b)[Math.floor(rawWidths.length/2)] : dataRange / targetBins;
-  const specsInView = [lsl, usl, S.target].filter(finite);
-  const scoreStep = step => {
-    let lo = floorStep(st.mn, step);
-    let hi = ceilStep(st.mx, step);
-    if(st.mx >= hi - Math.abs(step)*1e-9) hi += step;
-    const bins = Math.round((hi - lo) / step);
-    if(!isFinite(bins) || bins < 1) return {score: Infinity, step, lo, hi, bins};
-    const emptyPenalty = bins > maxBins ? (bins - maxBins) * 6 : bins < minBins ? (minBins - bins) * 6 : 0;
-    const targetPenalty = Math.abs(bins - targetBins) * 1.25;
-    const widthPenalty = Math.abs(Math.log(step / bwBase)) * 0.9;
-    const specPenalty = specsInView.some(v => v < lo || v > hi) ? 3 : 0;
-    return {score: emptyPenalty + targetPenalty + widthPenalty + specPenalty, step, lo, hi, bins};
-  };
-  let chosen = [...niceCandidates(bwBase), ...niceCandidates(dataRange / targetBins)]
-    .map(scoreStep).sort((a,b)=>a.score-b.score)[0];
-  let bw = chosen.step, edge0 = chosen.lo, edgeN = chosen.hi, nBins = chosen.bins;
+  // Largura das classes usando regra de Freedman-Diaconis
+  const q1 = quantile(0.25);
+  const q3 = quantile(0.75);
+  const iqr = q3 - q1;
+  let binWidth;
+  if (iqr > 0 && isFinite(iqr)) {
+    binWidth = 2 * iqr / Math.pow(n, 1/3);
+  } else {
+    binWidth = (Math.max(...arr) - Math.min(...arr)) / targetBins;
+  }
 
-  const edges = Array.from({length: nBins + 1}, (_, i) => edge0 + i * bw);
-  const mids  = Array.from({length: nBins}, (_, i) => (edges[i] + edges[i+1]) / 2);
+  // Arredondar largura para um número "bonito"
+  if (binWidth > 0 && isFinite(binWidth)) {
+    const binWidthExp = Math.pow(10, Math.floor(Math.log10(binWidth)));
+    binWidth = Math.ceil(binWidth / binWidthExp) * binWidthExp;
+  }
+  if (!isFinite(binWidth) || binWidth <= 0) {
+    binWidth = (Math.max(...arr) - Math.min(...arr)) / targetBins;
+  }
+  if (!isFinite(binWidth) || binWidth <= 0) binWidth = 0.01;
+
+  // Determinar bordas das classes
+  const dataMin = Math.min(...arr);
+  const dataMax = Math.max(...arr);
+  let edge0 = Math.floor(dataMin / binWidth) * binWidth;
+  let edgeN = Math.ceil(dataMax / binWidth) * binWidth;
+
+  // Criar classes
+  const nBins = Math.max(1, Math.round((edgeN - edge0) / binWidth));
+  const edges = Array.from({ length: nBins + 1 }, (_, i) => edge0 + i * binWidth);
+  const mids = edges.slice(0, -1).map((e, i) => (e + edges[i + 1]) / 2);
   const counts = Array(nBins).fill(0);
+
   arr.forEach(v => {
-    let i = Math.floor((v - edge0) / bw);
-    counts[Math.max(0, Math.min(nBins - 1, i))]++;
+    let i = Math.floor((v - edge0) / binWidth);
+    if (i >= 0 && i < nBins) counts[i]++;
   });
+  // Intervalo do eixo X (inclui LSL/USL e um pouco de margem)
+  const specVals = [lsl, usl, target, st.xbar].filter(finite);
+  const dataMinForAxis = Math.min(edge0, ...specVals);
+  const dataMaxForAxis = Math.max(edgeN, ...specVals);
+  const xPadding = Math.max(binWidth * 0.8, (dataMaxForAxis - dataMinForAxis) * 0.08);
+  const axMin = dataMinForAxis - xPadding;
+  const axMax = dataMaxForAxis + xPadding;
 
-  /* ── Eixo X: SEMPRE inclui LSL/USL/TGT/x̄ dentro do gráfico, com folga.
-     Assim os limites de especificação são sempre visíveis como linhas
-     verticais, não como indicadores na borda. */
-  const specVals = [lsl, usl, S.target, st.xbar].filter(finite);
-  const spanData = Math.max(edgeN - edge0, bw * nBins);
-  const xPadData = Math.max(bw * 1.25, spanData * 0.10);
-  let axMin = edge0 - xPadData;
-  let axMax = edgeN + xPadData;
-  specVals.forEach(v => {
-    if (v < axMin) axMin = v - Math.max(bw, spanData * 0.05);
-    if (v > axMax) axMax = v + Math.max(bw, spanData * 0.05);
-  });
-  const tickStep = niceStep((axMax - axMin) / 9);
-  const ldec = Math.max(DEC, tickStep < 1 ? Math.ceil(-Math.log10(tickStep)) + 1 : 0);
+  // Altura máxima do gráfico (barras + curva normal)
+  const maxCount = Math.max(...counts);
+  const curveScale = n * binWidth;
+  const curveMax = st.s > 0 ? normPDF(st.xbar, st.xbar, st.s) * curveScale : 0;
+  const yMax = Math.max(maxCount, curveMax, 1) * 1.15;
 
-  /* ── Curva normal: overlay em frequência absoluta, como Q-DAS/Minitab. */
-  const nPts = 420;
-  const curveX = Array.from({length: nPts}, (_, i) => axMin + (i / (nPts - 1)) * (axMax - axMin));
-  const curveY = curveX.map(x => st.s > 0 ? normPDF(x, st.xbar, st.s) * n * bw : 0);
-  const curveMax = Math.max(...curveY, 0);
-  const maxCnt = Math.max(...counts, curveMax, 1);
-
+  // Preparar dados para as barras (serão desenhadas via plugin)
+  const barData = mids.map((mid, idx) => ({
+    x: mid,
+    y: counts[idx],
+    width: binWidth,
+    isOut: (() => {
+      if (specType === 'bilateral' && finite(lsl) && finite(usl)) {
+        return mid < lsl || mid > usl;
+      } else if (specType === 'usl-only' && finite(usl)) {
+        return mid > usl;
+      } else if (specType === 'lsl-only' && finite(lsl)) {
+        return mid < lsl;
+      }
+      return false;
+    })()
+  }));
+  // Dados da curva normal
+  const curvePoints = [];
+  const steps = 300;
+  for (let i = 0; i <= steps; i++) {
+    const x = axMin + (i / steps) * (axMax - axMin);
+    curvePoints.push({
+      x: x,
+      y: (st.s > 0 && isFinite(st.s)) ? normPDF(x, st.xbar, st.s) * curveScale : 0
+    });
+  }
+  // Plugin para desenhar barras e linhas de especificação
   const histPlugin = {
-    id: 'histDrawPro',
-    afterDraw(chart){
-      const {ctx:c, chartArea:{left,right,top,bottom}, scales:{xLin, yLin}} = chart;
-      const X = v => xLin.getPixelForValue(v);
-      const Y = v => yLin.getPixelForValue(v);
-      const y0 = Y(0);
+    id: 'histogramLinearPlugin',
+    afterDatasetsDraw(chart) {
+      const { ctx: c, chartArea: { left, right, top, bottom }, scales: { x, y } } = chart;
 
       c.save();
-      c.fillStyle = 'rgba(15,22,35,0.025)';
-      c.fillRect(left, top, right-left, bottom-top);
-      c.restore();
 
-      /* Faixas fora de especificação no fundo */
-      const fillSpecZone = (a, b) => {
-        const x1 = Math.max(left, Math.min(right, X(a)));
-        const x2 = Math.max(left, Math.min(right, X(b)));
-        const w = Math.abs(x2 - x1);
-        if(w < 1) return;
-        c.save();
-        c.fillStyle = 'rgba(220,38,38,0.055)';
-        c.fillRect(Math.min(x1,x2), top, w, bottom-top);
-        c.restore();
+      // Desenhar faixas de rejeição (fora da especificação) no fundo
+      const drawRejectionZone = (x1, x2, color) => {
+        if (x1 >= x2) return;
+        const px1 = Math.max(left, x.getPixelForValue(x1));
+        const px2 = Math.min(right, x.getPixelForValue(x2));
+        if (px2 > px1) {
+          c.fillStyle = color;
+          c.fillRect(px1, top, px2 - px1, bottom - top);
+        }
       };
-      if(specType === 'bilateral' && finite(lsl) && finite(usl)){
-        fillSpecZone(axMin, lsl); fillSpecZone(usl, axMax);
-      } else if(specType === 'usl-only' && finite(usl)) fillSpecZone(usl, axMax);
-      else if(specType === 'lsl-only' && finite(lsl)) fillSpecZone(axMin, lsl);
 
-      /* Barras com pequeno vão visual e rótulo de frequência quando há espaço */
-      for(let i = 0; i < nBins; i++){
-        const rawX1 = X(edges[i]);
-        const rawX2 = X(edges[i+1]);
-        const gap = Math.min(3, Math.max(1, (rawX2 - rawX1) * 0.035));
-        const x1 = rawX1 + gap / 2;
-        const x2 = rawX2 - gap / 2;
-        const yTop = Y(counts[i]);
-        const out = (specType==='bilateral' && finite(lsl) && finite(usl) && (mids[i]<lsl || mids[i]>usl))
-                 || (specType==='usl-only'  && finite(usl) && mids[i]>usl)
-                 || (specType==='lsl-only'  && finite(lsl) && mids[i]<lsl);
-        const grad = c.createLinearGradient(0, yTop, 0, y0);
-        if(out){
-          grad.addColorStop(0, 'rgba(220,38,38,0.70)');
-          grad.addColorStop(1, 'rgba(220,38,38,0.42)');
-          c.strokeStyle = 'rgba(185,28,28,0.90)';
-        }else{
-          grad.addColorStop(0, 'rgba(26,86,219,0.72)');
-          grad.addColorStop(1, 'rgba(26,86,219,0.36)');
-          c.strokeStyle = 'rgba(26,86,219,0.88)';
-        }
-        c.save();
-        c.fillStyle = grad;
-        c.lineWidth = 1;
-        c.fillRect(x1, yTop, Math.max(1, x2-x1), y0-yTop);
-        c.strokeRect(x1, yTop, Math.max(1, x2-x1), y0-yTop);
-        if(counts[i] > 0 && (x2-x1) > 18 && (y0-yTop) > 16){
-          c.fillStyle = '#0f1723';
-          c.font = '700 9px "Geist Mono",monospace';
-          c.textAlign = 'center';
-          c.fillText(String(counts[i]), (x1+x2)/2, Math.max(top+10, yTop-4));
-        }
-        c.restore();
+      if (specType === 'bilateral' && finite(lsl) && finite(usl)) {
+        drawRejectionZone(axMin, lsl, 'rgba(220, 38, 38, 0.08)');
+        drawRejectionZone(usl, axMax, 'rgba(220, 38, 38, 0.08)');
+      } else if (specType === 'usl-only' && finite(usl)) {
+        drawRejectionZone(usl, axMax, 'rgba(220, 38, 38, 0.08)');
+      } else if (specType === 'lsl-only' && finite(lsl)) {
+        drawRejectionZone(axMin, lsl, 'rgba(220, 38, 38, 0.08)');
       }
 
-      /* Polígono da normal por cima das barras */
-      c.save();
+      // Desenhar barras
+      barData.forEach(bar => {
+        const x0 = x.getPixelForValue(bar.x - bar.width / 2);
+        const x1 = x.getPixelForValue(bar.x + bar.width / 2);
+        const y0 = y.getPixelForValue(0);
+        const y1 = y.getPixelForValue(bar.y);
+
+        if (x1 > left && x0 < right && bar.y > 0) {
+          const drawX = Math.max(left, x0);
+          const drawW = Math.min(right, x1) - drawX;
+          const drawH = Math.max(0, y0 - y1);
+
+          if (drawW > 0.5 && drawH > 0) {
+            const grad = c.createLinearGradient(0, y1, 0, y0);
+            if (bar.isOut) {
+              grad.addColorStop(0, 'rgba(220, 38, 38, 0.85)');
+              grad.addColorStop(1, 'rgba(220, 38, 38, 0.5)');
+              c.strokeStyle = 'rgba(185, 28, 28, 0.9)';
+            } else {
+              grad.addColorStop(0, 'rgba(26, 86, 219, 0.8)');
+              grad.addColorStop(1, 'rgba(26, 86, 219, 0.4)');
+              c.strokeStyle = 'rgba(26, 86, 219, 0.85)';
+            }
+            c.fillStyle = grad;
+            c.fillRect(drawX, y1, drawW, drawH);
+            c.strokeRect(drawX, y1, drawW, drawH);
+
+            if (bar.y > 0 && drawW > 20 && drawH > 18) {
+              c.fillStyle = '#0f1723';
+              c.font = '700 9px "Geist Mono", monospace';
+              c.textAlign = 'center';
+              c.fillText(String(bar.y), drawX + drawW / 2, Math.max(top + 10, y1 - 4));
+            }
+          }
+        }
+      });
+
+      // Desenhar curva normal
+      c.beginPath();
       c.strokeStyle = '#b45309';
-      c.lineWidth = 2.4;
+      c.lineWidth = 2.5;
       c.lineJoin = 'round';
       c.lineCap = 'round';
-      c.beginPath();
-      curveX.forEach((xv, i) => {
-        const px = X(xv), py = Y(curveY[i]);
-        i === 0 ? c.moveTo(px, py) : c.lineTo(px, py);
-      });
-      c.stroke();
-      c.restore();
 
-      const drawVLine = (val, color, lbl, dash, anchor='top') => {
-        if(!finite(val)) return;
-        const xp = X(val);
-        const inView = xp >= left - 1 && xp <= right + 1;
-        const xd = Math.max(left, Math.min(right, xp));
-        c.save();
-        if(inView){
-          c.strokeStyle = color; c.lineWidth = 2;
-          c.setLineDash(dash);
-          c.beginPath(); c.moveTo(xd, top); c.lineTo(xd, bottom); c.stroke();
-          c.setLineDash([]);
+      let first = true;
+      for (const pt of curvePoints) {
+        const px = x.getPixelForValue(pt.x);
+        const py = y.getPixelForValue(pt.y);
+        if (px >= left - 10 && px <= right + 10 && isFinite(py)) {
+          if (first) {
+            c.moveTo(px, py);
+            first = false;
+          } else {
+            c.lineTo(px, py);
+          }
+        } else {
+          first = true;
         }
-        c.font = 'bold 9px "Geist Mono",monospace';
-        c.textAlign = 'center';
-        const arrow = inView ? '' : (xp < left ? '◀ ' : ' ▶');
-        const fullLbl = inView ? lbl : (xp < left ? arrow + lbl : lbl + arrow);
-        const tw = c.measureText(fullLbl).width + 8;
-        const lx = Math.max(left + tw/2 + 1, Math.min(right - tw/2 - 1, xd));
-        const ly = anchor === 'bottom' ? bottom - 6 : top + 12;
-        c.fillStyle = inView ? 'rgba(255,255,255,0.92)' : 'rgba(255,240,240,0.95)';
-        c.strokeStyle = color;
-        c.lineWidth = 1;
-        c.beginPath();
-        c.roundRect(lx - tw/2, ly - 10, tw, 13, 3);
-        c.fill(); c.stroke();
-        c.fillStyle = color;
-        c.fillText(fullLbl, lx, ly);
-        c.restore();
+      }
+      c.stroke();
+
+      // Desenhar linhas de especificação
+      const drawVLine = (val, color, lbl, dash, yOffset = 12, anchorTop = true) => {
+        if (!finite(val)) return;
+        const px = x.getPixelForValue(val);
+        if (px >= left - 5 && px <= right + 5) {
+          c.beginPath();
+          c.moveTo(px, top);
+          c.lineTo(px, bottom);
+          c.strokeStyle = color;
+          c.lineWidth = 1.8;
+          c.setLineDash(dash);
+          c.stroke();
+          c.setLineDash([]);
+
+          c.font = 'bold 9px "Geist Mono", monospace';
+          c.fillStyle = color;
+          c.textAlign = 'center';
+          const yPos = anchorTop ? top + yOffset : bottom - yOffset;
+          c.fillText(lbl, px, yPos);
+        }
       };
 
-      drawVLine(lsl,      '#dc2626', 'LSL', [7,4]);
-      drawVLine(usl,      '#dc2626', 'USL', [7,4]);
-      drawVLine(S.target, '#1a56db', 'TGT', [5,3], 'bottom');
-      drawVLine(st.xbar,  '#b45309', 'x̄',   [4,3], 'bottom');
+      drawVLine(lsl, '#dc2626', 'LSL', [6, 4], 12, true);
+      drawVLine(usl, '#dc2626', 'USL', [6, 4], 12, true);
+      drawVLine(target, '#1a56db', 'TGT', [5, 3], 10, false);
+      drawVLine(st.xbar, '#d97706', 'x̄', [4, 3], 10, false);
+
+      c.restore();
     }
   };
+  if (CH.hist) CH.hist.destroy();
 
   CH.hist = new Chart(ctx, {
     type: 'scatter',
-    data: { datasets: [{ data: [], xAxisID: 'xLin', yAxisID: 'yLin' }]},
-    options:{
+    data: { datasets: [] },
+    options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      plugins:{ legend:{display:false}, tooltip:{enabled:false} },
-      scales:{
-        xLin:{
-          type:'linear', min:axMin, max:axMax,
-          grid:{ color:'rgba(15,22,35,0.055)', drawBorder:true },
-          ticks:{
-            maxTicksLimit: 10,
-            stepSize: tickStep,
-            callback: v => Number(v).toFixed(ldec),
-            font:{size:9},
-            maxRotation:0,
-            autoSkip:true
+      plugins: {
+        legend: { display: false },
+        tooltip: { enabled: false }
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          min: axMin,
+          max: axMax,
+          title: {
+            display: true,
+            text: S.iUnit ? `Valor (${S.iUnit})` : 'Valor',
+            font: { size: 10, weight: 'bold' }
           },
-          title:{display:true, text:S.iUnit ? `Valor (${S.iUnit})` : 'Valor', font:{size:9}}
+          grid: { color: 'rgba(15,22,35,0.06)' },
+          ticks: {
+            maxTicksLimit: 10,
+            callback: function(val) {
+              return parseFloat(val.toFixed(5)).toString();
+            },
+            font: { size: 9 }
+          }
         },
-        yLin:{
-          type:'linear', min:0, suggestedMax:maxCnt * 1.22,
-          grid:{ color:'rgba(15,22,35,0.055)' },
-          title:{display:true, text:'Frequência', font:{size:9}},
-          ticks:{ precision:0, font:{size:9} }
+        y: {
+          type: 'linear',
+          min: 0,
+          max: yMax,
+          title: {
+            display: true,
+            text: 'Frequência',
+            font: { size: 10, weight: 'bold' }
+          },
+          grid: { color: 'rgba(15,22,35,0.06)' },
+          ticks: {
+            precision: 0,
+            font: { size: 9 },
+            stepSize: Math.ceil(maxCount / 6)
+          }
         }
       }
     },
-    plugins:[histPlugin]
+    plugins: [histPlugin]
   });
 
-  document.getElementById('nHist').textContent =
-    `${nBins} classes · largura=${bw.toFixed(ldec)} · curva normal sobreposta · N=${n}`;
+  document.getElementById('nHist').textContent = `${nBins} classes · largura=${binWidth.toFixed(6)} · N=${n}`;
 }
 
 /* ── I-CHART ── */
@@ -3303,7 +3358,8 @@ function countDec(v) {
 /* Alterna visibilidade dos paineis de tolerancia */
 function simToggleTolMode() {
   var mode = document.getElementById('simTolMode').value;
-  var panels = { bilateral:'simPanBilateral', amplitude:'simPanAmplitude',
+  var panels = { bilateral:'simPanBilateral', asymmetric:'simPanAsym',
+                 amplitude:'simPanAmplitude',
                  manual:'simPanManual', usl_only:'simPanUSL', lsl_only:'simPanLSL' };
   Object.keys(panels).forEach(function(k) {
     var el = document.getElementById(panels[k]);
@@ -3320,6 +3376,14 @@ function simResolveLimits() {
   if (mode === 'bilateral') {
     var tol = parseFloat(document.getElementById('simTol').value);
     if (!isNaN(ref) && !isNaN(tol) && tol > 0) { lsl = ref - tol; usl = ref + tol; }
+  } else if (mode === 'asymmetric') {
+    var tUp   = parseFloat(document.getElementById('simTolUp').value);
+    var tDown = parseFloat(document.getElementById('simTolDown').value);
+    // Aceita valores absolutos (positivos) — se vier negativo, usa abs
+    if (!isNaN(ref) && !isNaN(tUp) && !isNaN(tDown)) {
+      var u = Math.abs(tUp), d = Math.abs(tDown);
+      if (u + d > 0) { lsl = ref - d; usl = ref + u; }
+    }
   } else if (mode === 'amplitude') {
     var it = parseFloat(document.getElementById('simIT').value);
     if (!isNaN(ref) && !isNaN(it) && it > 0) { lsl = ref - it/2; usl = ref + it/2; }
@@ -3588,6 +3652,7 @@ function generateSim() { runSim(); }
 ═══════════════════════════════════════════════ */
 function resetAll(){
   S.data=[];S.lsl=null;S.usl=null;S.target=null;S.specType='bilateral';lastStats=null;
+  currentStudyId=null;
   ['iPN','iPartName','iCharCode','iCharName','iSpecBy','iUnit','iOwner','iEquip','iReport','iNotes','iLSL','iUSL','iTarget','iPaste'].forEach(id=>{
     const el=document.getElementById(id);if(el)el.value='';
   });
@@ -3595,6 +3660,20 @@ function resetAll(){
   document.getElementById('iDate').value=new Date().toISOString().slice(0,10);
   clearVisuals();updateChips();updateTolInfo();updateStudyHeader();
   toast('Dashboard resetado','warn');
+}
+
+/* Novo Estudo: limpa o estudo atual e abre a aba de análise */
+function newStudy(btn){
+  currentStudyId=null;
+  S.data=[];S.lsl=null;S.usl=null;S.target=null;S.specType='bilateral';lastStats=null;
+  ['iPN','iPartName','iCharCode','iCharName','iSpecBy','iUnit','iOwner','iEquip','iReport','iNotes','iLSL','iUSL','iTarget','iPaste'].forEach(id=>{
+    const el=document.getElementById(id);if(el)el.value='';
+  });
+  const stEl=document.getElementById('iSpecType');if(stEl)stEl.value='bilateral';
+  const dEl=document.getElementById('iDate');if(dEl)dEl.value=new Date().toISOString().slice(0,10);
+  try{clearVisuals();updateChips();updateTolInfo();updateStudyHeader();}catch(e){}
+  showPage('analysis',btn);
+  toast('Novo estudo iniciado','ok');
 }
 
 /* ═══════════════════════════════════════════════
