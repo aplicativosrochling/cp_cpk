@@ -11,7 +11,7 @@
 
 <script type="module">
   import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot }
+  import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDocs }
     from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
   const firebaseConfig = {
     apiKey: "AIzaSyBpPzWg7u2psTpZnEbQG4P-hFwdFBWg9Ws",
@@ -21,17 +21,23 @@
     messagingSenderId: "1006032759926",
     appId: "1:1006032759926:web:3165c115614a341ba18357"
   };
-  const app = initializeApp(firebaseConfig);
-  const db = getFirestore(app);
-  const col = collection(db, "studies");
-  window.FB = {
-    saveStudy: (s) => setDoc(doc(col, s.id), s),
-    deleteStudy: (id) => deleteDoc(doc(col, id)),
-    listen: (cb) => onSnapshot(col, (snap)=>{
-      const arr = []; snap.forEach(d=>arr.push(d.data())); cb(arr);
-    }, (err)=>console.warn('Firebase listen error',err))
-  };
-  window.dispatchEvent(new Event('fb-ready'));
+  try {
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const col = collection(db, "studies");
+    window.FB = {
+      saveStudy: (s) => setDoc(doc(col, s.id), s),
+      deleteStudy: (id) => deleteDoc(doc(col, id)),
+      getAll: () => getDocs(col).then(snap => { const a=[]; snap.forEach(d=>a.push(d.data())); return a; }),
+      listen: (cb) => onSnapshot(col, (snap)=>{
+        const arr = []; snap.forEach(d=>arr.push(d.data())); cb(arr);
+      }, (err)=>{ console.warn('Firebase listen error', err); })
+    };
+    // Use setTimeout to ensure main script has registered its listener
+    setTimeout(() => window.dispatchEvent(new Event('fb-ready')), 0);
+  } catch(e) {
+    console.error('Firebase init error:', e);
+  }
 </script>
 <style>
 /* ══════════════════════════════════════════════════════
@@ -1181,7 +1187,10 @@ body{
         <h2 style="font-size:18px;font-weight:700;color:var(--t0);margin:0">📊 Dashboard de Capabilidade</h2>
         <p style="font-size:11.5px;color:var(--t2);margin:4px 0 0">Visão consolidada de todos os estudos · <span id="dashSyncState" style="font-family:var(--mono);color:var(--t3)">offline</span></p>
       </div>
-      <button class="btn btn-ghost btn-sm" onclick="renderDashboard()">↻ Atualizar</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="btn btn-ghost btn-sm" onclick="renderDashboard()">↻ Atualizar</button>
+        <button class="btn btn-ok btn-sm" onclick="forceFBSync()" title="Forçar sincronização com Firebase">⬆ Sincronizar</button>
+      </div>
     </div>
 
     <div class="kpi-grid" id="kpiGrid"></div>
@@ -3711,7 +3720,11 @@ function saveStudy(){
   if(idx>=0) STUDIES[idx]=study;
   else STUDIES.push(study);
   localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
-  if(window.FB){ window.FB.saveStudy(study).catch(e=>console.warn('FB save',e)); }
+  if(window.FB){
+    window.FB.saveStudy(study)
+      .then(()=>{ console.log('[FB] Saved:', study.id); })
+      .catch(e=>{ console.warn('[FB] Save failed, will retry on next sync:', e); });
+  }
   currentStudyId=study.id;
   toast(`Estudo "${fd.pname||'Sem nome'}" salvo!`,'ok');
 }
@@ -3842,27 +3855,73 @@ function deleteStudyById(id){
   renderStudiesList();toast('Estudo excluído','warn');
 }
 
-/* Firebase live sync */
-function _fbInit(){
+/* Force manual sync: push all localStorage → Firebase */
+async function forceFBSync(){
+  if(!window.FB){ toast('Firebase não conectado ainda. Aguarde…','warn'); return; }
+  const syncEl = document.getElementById('dashSyncState');
+  if(syncEl){ syncEl.textContent='⬆ sincronizando…'; syncEl.style.color='var(--warn)'; }
+  const toSync = JSON.parse(localStorage.getItem('spc_studies')||'[]');
+  if(!toSync.length){ toast('Nenhum estudo local para sincronizar.','info'); return; }
+  let ok=0, fail=0;
+  for(const s of toSync){
+    if(!s||!s.id) continue;
+    try{ await window.FB.saveStudy(s); ok++; }
+    catch(e){ fail++; console.warn('Sync fail:', s.id, e); }
+  }
+  toast(`Sincronização: ${ok} enviados${fail?', '+fail+' falhas':''}!`, fail?'warn':'ok');
+  if(syncEl){ syncEl.textContent='● online · '+STUDIES.length+' estudo(s)'; syncEl.style.color='var(--ok)'; }
+}
+
+/* Firebase live sync + auto-migration */
+async function _fbInit(){
   if(!window.FB) return;
-  document.getElementById('dashSyncState') && (document.getElementById('dashSyncState').textContent='conectando…');
+  const syncEl = document.getElementById('dashSyncState');
+  if(syncEl){ syncEl.textContent='🔄 conectando…'; syncEl.style.color='var(--warn)'; }
+
+  // ── AUTO-MIGRATION: push all localStorage studies to Firebase on first connect
+  const localStudies = JSON.parse(localStorage.getItem('spc_studies')||'[]');
+  if(localStudies.length > 0){
+    if(syncEl){ syncEl.textContent='⬆ migrando '+localStudies.length+' estudos…'; syncEl.style.color='var(--warn)'; }
+    let migrated = 0;
+    for(const s of localStudies){
+      if(!s||!s.id) continue;
+      try{ await window.FB.saveStudy(s); migrated++; }
+      catch(e){ console.warn('Migration failed for', s.id, e); }
+    }
+    console.log('[FB] Migrated', migrated, 'studies from localStorage to Firestore');
+  }
+
+  // ── REALTIME LISTENER: keep in sync
   window.FB.listen(arr=>{
-    // Merge: cloud is source of truth (latest by savedAt per id)
+    // Merge: cloud wins for same id (source of truth after migration)
     const map = {};
-    [...STUDIES, ...arr].forEach(s=>{
-      if(!s||!s.id) return;
-      const cur = map[s.id];
-      if(!cur || new Date(s.savedAt||0) >= new Date(cur.savedAt||0)) map[s.id]=s;
-    });
-    STUDIES = Object.values(map);
+    // Start with local
+    localStudies.forEach(s=>{ if(s&&s.id) map[s.id]=s; });
+    // Cloud overwrites (cloud is authoritative)
+    arr.forEach(s=>{ if(s&&s.id) map[s.id]=s; });
+    STUDIES = Object.values(map).sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
     localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
+
     const el=document.getElementById('dashSyncState');
-    if(el){el.textContent='● online · '+STUDIES.length+' estudos sincronizados';el.style.color='var(--ok)';}
+    if(el){
+      el.textContent='● online · '+STUDIES.length+' estudo(s) sincronizado(s)';
+      el.style.color='var(--ok)';
+    }
     if(document.getElementById('page-dashboard')?.classList.contains('active')) renderDashboard();
     if(document.getElementById('page-studies')?.classList.contains('active')) renderStudiesList();
   });
 }
-if(window.FB) _fbInit(); else window.addEventListener('fb-ready', _fbInit);
+
+// Guard: if FB already set before DOMContentLoaded (race condition fix)
+if(window.FB){ _fbInit(); }
+else { window.addEventListener('fb-ready', _fbInit, {once:true}); }
+
+// Fallback: retry after 3s in case event was missed
+setTimeout(()=>{
+  if(window.FB && document.getElementById('dashSyncState')?.textContent === 'offline'){
+    _fbInit();
+  }
+}, 3000);
 
 /* ═══════════════════════════════════════════════
    PRINT
