@@ -9,35 +9,65 @@
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
 
-<script type="module">
-  import { initializeApp } from "https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js";
-  import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDocs }
-    from "https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js";
-  const firebaseConfig = {
-    apiKey: "AIzaSyBpPzWg7u2psTpZnEbQG4P-hFwdFBWg9Ws",
-    authDomain: "cp-cpk.firebaseapp.com",
-    projectId: "cp-cpk",
-    storageBucket: "cp-cpk.firebasestorage.app",
-    messagingSenderId: "1006032759926",
-    appId: "1:1006032759926:web:3165c115614a341ba18357"
-  };
-  try {
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
-    const col = collection(db, "studies");
-    window.FB = {
-      saveStudy: (s) => setDoc(doc(col, s.id), s),
-      deleteStudy: (id) => deleteDoc(doc(col, id)),
-      getAll: () => getDocs(col).then(snap => { const a=[]; snap.forEach(d=>a.push(d.data())); return a; }),
-      listen: (cb) => onSnapshot(col, (snap)=>{
-        const arr = []; snap.forEach(d=>arr.push(d.data())); cb(arr);
-      }, (err)=>{ console.warn('Firebase listen error', err); })
+<!-- Firebase Compat — funciona em qualquer navegador sem bundler -->
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
+
+<script>
+  (function() {
+    var firebaseConfig = {
+      apiKey:            "AIzaSyBpPzWg7u2psTpZnEbQG4P-hFwdFBWg9Ws",
+      authDomain:        "cp-cpk.firebaseapp.com",
+      projectId:         "cp-cpk",
+      storageBucket:     "cp-cpk.firebasestorage.app",
+      messagingSenderId: "1006032759926",
+      appId:             "1:1006032759926:web:3165c115614a341ba18357"
     };
-    // Use setTimeout to ensure main script has registered its listener
-    setTimeout(() => window.dispatchEvent(new Event('fb-ready')), 0);
-  } catch(e) {
-    console.error('Firebase init error:', e);
-  }
+
+    try {
+      // Evita re-inicializar se a página for recarregada via HMR
+      var app = firebase.apps.length
+        ? firebase.apps[0]
+        : firebase.initializeApp(firebaseConfig);
+
+      var db  = firebase.firestore(app);
+      var col = db.collection("studies");
+
+      window.FB = {
+        saveStudy:   function(s) {
+          return col.doc(s.id).set(s);
+        },
+        deleteStudy: function(id) {
+          return col.doc(id).delete();
+        },
+        getAll: function() {
+          return col.get().then(function(snap) {
+            var a = [];
+            snap.forEach(function(d) { a.push(d.data()); });
+            return a;
+          });
+        },
+        listen: function(cb) {
+          return col.onSnapshot(
+            function(snap) {
+              var arr = [];
+              snap.forEach(function(d) { arr.push(d.data()); });
+              cb(arr);
+            },
+            function(err) { console.warn("Firebase listen error", err); }
+          );
+        }
+      };
+
+      // Dispara o evento após o script principal ter registrado os listeners
+      setTimeout(function() {
+        window.dispatchEvent(new Event("fb-ready"));
+      }, 0);
+
+    } catch(e) {
+      console.error("Firebase init error:", e);
+    }
+  })();
 </script>
 <style>
 /* ══════════════════════════════════════════════════════
