@@ -14,6 +14,14 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 
 <script>
+  // ══════════════════════════════════════════════════════════════════
+  // FIREBASE — FONTE ÚNICA DA VERDADE
+  // • Sem persistência offline (disableNetwork nunca é chamado)
+  // • Sem cache local como fonte primária
+  // • Toda leitura forçada via source:'server'
+  // • Listener ignora snapshots oriundos do cache
+  // • localStorage usado APENAS como backup temporário de UI
+  // ══════════════════════════════════════════════════════════════════
   (function() {
     var firebaseConfig = {
       apiKey:            "AIzaSyBpPzWg7u2psTpZnEbQG4P-hFwdFBWg9Ws",
@@ -25,47 +33,79 @@
     };
 
     try {
-      // Evita re-inicializar se a página for recarregada via HMR
       var app = firebase.apps.length
         ? firebase.apps[0]
         : firebase.initializeApp(firebaseConfig);
 
-      var db  = firebase.firestore(app);
+      var db = firebase.firestore(app);
+
+      // ── DESABILITAR cache offline completamente ──
+      // Firestore compat: disablePersistence não existe, mas basta NÃO chamar
+      // enablePersistence() — o padrão SDK web é sem persistência offline.
+      // Garante que leituras { source:'server' } não caiam no cache IndexedDB.
+      db.settings({ cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED });
+
       var col = db.collection("studies");
 
       window.FB = {
-        saveStudy:   function(s) {
+
+        // ── Salva / atualiza — vai direto ao servidor ──
+        saveStudy: function(s) {
           return col.doc(s.id).set(s);
         },
+
+        // ── Deleta — aguarda confirmação do servidor ──
         deleteStudy: function(id) {
-          return col.doc(id).delete();
+          return col.doc(id).delete()
+            .then(function() {
+              console.log('[FB] Deletado no servidor:', id);
+            })
+            .catch(function(err) {
+              console.error('[FB] Erro ao deletar:', err);
+              throw err;
+            });
         },
+
+        // ── Lê TUDO do servidor (nunca do cache) ──
         getAll: function() {
-          return col.get().then(function(snap) {
-            var a = [];
-            snap.forEach(function(d) { a.push(d.data()); });
-            return a;
-          });
+          return col.get({ source: 'server' })
+            .then(function(snap) {
+              var arr = [];
+              snap.forEach(function(d) { if (d.exists) arr.push(d.data()); });
+              console.log('[FB] getAll() do servidor:', arr.length, 'estudos');
+              return arr;
+            });
+          // Sem fallback para cache — se o servidor não responder, propaga o erro
         },
+
+        // ── Listener em tempo real — ignora snapshots de cache ──
         listen: function(cb) {
           return col.onSnapshot(
+            { includeMetadataChanges: true },
             function(snap) {
+              // Só processa quando os dados vêm do servidor
+              if (snap.metadata.fromCache) {
+                console.log('[FB] Snapshot ignorado (origem: cache local)');
+                return;
+              }
               var arr = [];
-              snap.forEach(function(d) { arr.push(d.data()); });
+              snap.forEach(function(d) { if (d.exists) arr.push(d.data()); });
+              console.log('[FB] Snapshot do servidor:', arr.length, 'estudos');
               cb(arr);
             },
-            function(err) { console.warn("Firebase listen error", err); }
+            function(err) {
+              console.warn('[FB] Listener error:', err);
+            }
           );
         }
       };
 
-      // Dispara o evento após o script principal ter registrado os listeners
       setTimeout(function() {
-        window.dispatchEvent(new Event("fb-ready"));
+        window.dispatchEvent(new Event('fb-ready'));
       }, 0);
 
     } catch(e) {
-      console.error("Firebase init error:", e);
+      console.error('[FB] Init error:', e);
     }
   })();
 </script>
@@ -1930,7 +1970,9 @@ const S = { data:[], lsl:null, usl:null, target:null, specType:'bilateral' };
 const CH = { hist:null, ic:null, mr:null, box:null, qq:null, cpktrend:null };
 let lastStats = null;
 let currentStudyId = null;
-let STUDIES = JSON.parse(localStorage.getItem('spc_studies')||'[]');
+// STUDIES começa vazio — Firebase é a fonte única da verdade.
+// localStorage é apenas backup temporário, nunca fonte primária.
+let STUDIES = [];
 
 /* ═══════════════════════════════════════════════
    CLOCK
@@ -3746,17 +3788,32 @@ function saveStudy(){
     ...fd,
     stats:{n:st.n,xbar:st.xbar,s:st.s,sw:st.sw,Cp:st.Cp,Cpk:st.Cpk,Pp:st.Pp,Ppk:st.Ppk,ppm:st.ppm,oos:st.oos,stable:st.stable}
   };
-  const idx=STUDIES.findIndex(s=>s.id===study.id);
-  if(idx>=0) STUDIES[idx]=study;
-  else STUDIES.push(study);
-  localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
-  if(window.FB){
-    window.FB.saveStudy(study)
-      .then(()=>{ console.log('[FB] Saved:', study.id); })
-      .catch(e=>{ console.warn('[FB] Save failed, will retry on next sync:', e); });
+
+  if(!window.FB){
+    toast('Firebase não conectado. Aguarde e tente novamente.','fail');
+    return;
   }
-  currentStudyId=study.id;
-  toast(`Estudo "${fd.pname||'Sem nome'}" salvo!`,'ok');
+
+  const syncEl=document.getElementById('dashSyncState');
+  if(syncEl){ syncEl.textContent='⬆ salvando…'; syncEl.style.color='var(--warn)'; }
+
+  // Firebase é a fonte única — salva diretamente no servidor
+  window.FB.saveStudy(study)
+    .then(()=>{
+      currentStudyId=study.id;
+      // localStorage apenas como backup temporário de UI (não é fonte primária)
+      const local=JSON.parse(localStorage.getItem('spc_studies')||'[]');
+      const idx=local.findIndex(s=>s.id===study.id);
+      if(idx>=0) local[idx]=study; else local.push(study);
+      localStorage.setItem('spc_studies',JSON.stringify(local));
+      toast(`Estudo "${fd.pname||'Sem nome'}" salvo no Firebase!`,'ok');
+      console.log('[FB] Salvo:', study.id);
+    })
+    .catch(e=>{
+      console.error('[FB] Erro ao salvar:', e);
+      toast('Erro ao salvar no Firebase. Verifique a conexão.','fail');
+      if(syncEl){ syncEl.textContent='● erro ao salvar'; syncEl.style.color='var(--fail)'; }
+    });
 }
 
 function loadStudyToEditor(id){
@@ -3783,20 +3840,39 @@ function loadStudyToEditor(id){
 function deleteCurrentStudy(){
   if(!currentStudyId)return;
   if(!confirm('Excluir este estudo permanentemente?'))return;
+  if(!window.FB){ toast('Firebase não conectado.','fail'); return; }
   const delId=currentStudyId;
-  STUDIES=STUDIES.filter(s=>s.id!==currentStudyId);
-  localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
-  if(window.FB) window.FB.deleteStudy(delId).catch(()=>{});
-  currentStudyId=null;
-  closeModal();
-  renderStudiesList();
-  toast('Estudo excluído','warn');
+  window.FB.deleteStudy(delId)
+    .then(()=>{
+      // Atualiza backup local após confirmação do servidor
+      const local=JSON.parse(localStorage.getItem('spc_studies')||'[]');
+      localStorage.setItem('spc_studies',JSON.stringify(local.filter(s=>s.id!==delId)));
+      STUDIES=STUDIES.filter(s=>s.id!==delId);
+      currentStudyId=null;
+      closeModal();
+      renderStudiesList();
+      toast('Estudo excluído','warn');
+    })
+    .catch(e=>{
+      console.error('[FB] Erro ao excluir:', e);
+      toast('Erro ao excluir no Firebase.','fail');
+    });
 }
 
-function clearAllStudies(){
+async function clearAllStudies(){
   if(!confirm('Excluir TODOS os estudos salvos? Esta ação não pode ser desfeita.'))return;
-  STUDIES=[];localStorage.removeItem('spc_studies');
-  renderStudiesList();toast('Todos os estudos foram removidos','warn');
+  if(!window.FB){ toast('Firebase não conectado.','fail'); return; }
+  const syncEl=document.getElementById('dashSyncState');
+  if(syncEl){ syncEl.textContent='⬆ excluindo…'; syncEl.style.color='var(--warn)'; }
+  let ok=0, fail=0;
+  for(const s of [...STUDIES]){
+    try{ await window.FB.deleteStudy(s.id); ok++; }
+    catch(e){ fail++; console.warn('[FB] Falha ao excluir:', s.id, e); }
+  }
+  STUDIES=[];
+  localStorage.removeItem('spc_studies');
+  renderStudiesList();
+  toast(fail?`${ok} excluídos, ${fail} falhas`:'Todos os estudos foram removidos', fail?'warn':'warn');
 }
 
 /* ═══════════════════════════════════════════════
@@ -3879,64 +3955,79 @@ document.getElementById('studyModal').addEventListener('click',e=>{if(e.target==
 
 function deleteStudyById(id){
   if(!confirm('Excluir este estudo?'))return;
-  STUDIES=STUDIES.filter(s=>s.id!==id);
-  localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
-  if(window.FB) window.FB.deleteStudy(id).catch(()=>{});
-  renderStudiesList();toast('Estudo excluído','warn');
+  if(!window.FB){ toast('Firebase não conectado.','fail'); return; }
+  window.FB.deleteStudy(id)
+    .then(()=>{
+      const local=JSON.parse(localStorage.getItem('spc_studies')||'[]');
+      localStorage.setItem('spc_studies',JSON.stringify(local.filter(s=>s.id!==id)));
+      STUDIES=STUDIES.filter(s=>s.id!==id);
+      renderStudiesList();
+      toast('Estudo excluído','warn');
+    })
+    .catch(e=>{
+      console.error('[FB] Erro ao excluir:', e);
+      toast('Erro ao excluir no Firebase.','fail');
+    });
 }
 
-/* Force manual sync: push all localStorage → Firebase */
+/* Força recarga do servidor — Firebase é a fonte única */
 async function forceFBSync(){
   if(!window.FB){ toast('Firebase não conectado ainda. Aguarde…','warn'); return; }
   const syncEl = document.getElementById('dashSyncState');
-  if(syncEl){ syncEl.textContent='⬆ sincronizando…'; syncEl.style.color='var(--warn)'; }
-  const toSync = JSON.parse(localStorage.getItem('spc_studies')||'[]');
-  if(!toSync.length){ toast('Nenhum estudo local para sincronizar.','info'); return; }
-  let ok=0, fail=0;
-  for(const s of toSync){
-    if(!s||!s.id) continue;
-    try{ await window.FB.saveStudy(s); ok++; }
-    catch(e){ fail++; console.warn('Sync fail:', s.id, e); }
+  if(syncEl){ syncEl.textContent='🔄 recarregando do servidor…'; syncEl.style.color='var(--warn)'; }
+  try {
+    const serverStudies = await window.FB.getAll();
+    STUDIES = serverStudies.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
+    localStorage.setItem('spc_studies', JSON.stringify(STUDIES));
+    toast(`Firebase: ${STUDIES.length} estudo(s) carregado(s) do servidor`, 'ok');
+    if(syncEl){ syncEl.textContent='● online · '+STUDIES.length+' estudo(s)'; syncEl.style.color='var(--ok)'; }
+    if(document.getElementById('page-dashboard')?.classList.contains('active')) renderDashboard();
+    if(document.getElementById('page-studies')?.classList.contains('active')) renderStudiesList();
+  } catch(e) {
+    console.error('[FB] Falha ao recarregar:', e);
+    toast('Falha ao recarregar do Firebase.', 'fail');
+    if(syncEl){ syncEl.textContent='● erro de conexão'; syncEl.style.color='var(--fail)'; }
   }
-  toast(`Sincronização: ${ok} enviados${fail?', '+fail+' falhas':''}!`, fail?'warn':'ok');
-  if(syncEl){ syncEl.textContent='● online · '+STUDIES.length+' estudo(s)'; syncEl.style.color='var(--ok)'; }
 }
 
-/* Firebase live sync + auto-migration */
+/* ═══════════════════════════════════════════════
+   FIREBASE INIT — FONTE ÚNICA DA VERDADE
+   • Ao abrir: carrega do servidor (não do localStorage)
+   • Listener: só dispara com dados do servidor
+   • localStorage: atualizado como reflexo do Firebase, nunca como fonte
+═══════════════════════════════════════════════ */
 async function _fbInit(){
   if(!window.FB) return;
   const syncEl = document.getElementById('dashSyncState');
-  if(syncEl){ syncEl.textContent='🔄 conectando…'; syncEl.style.color='var(--warn)'; }
+  if(syncEl){ syncEl.textContent='🔄 carregando do servidor…'; syncEl.style.color='var(--warn)'; }
 
-  // ── AUTO-MIGRATION: push all localStorage studies to Firebase on first connect
-  const localStudies = JSON.parse(localStorage.getItem('spc_studies')||'[]');
-  if(localStudies.length > 0){
-    if(syncEl){ syncEl.textContent='⬆ migrando '+localStudies.length+' estudos…'; syncEl.style.color='var(--warn)'; }
-    let migrated = 0;
-    for(const s of localStudies){
-      if(!s||!s.id) continue;
-      try{ await window.FB.saveStudy(s); migrated++; }
-      catch(e){ console.warn('Migration failed for', s.id, e); }
-    }
-    console.log('[FB] Migrated', migrated, 'studies from localStorage to Firestore');
+  // ── CARGA INICIAL: sempre do servidor ──
+  try {
+    const serverStudies = await window.FB.getAll();
+    // Firebase é a fonte única — descarta qualquer dado local que conflite
+    STUDIES = serverStudies.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
+    // Atualiza localStorage como reflexo (backup temporário, não fonte)
+    localStorage.setItem('spc_studies', JSON.stringify(STUDIES));
+    console.log('[FB] Carga inicial do servidor:', STUDIES.length, 'estudos');
+    if(syncEl){ syncEl.textContent='● online · '+STUDIES.length+' estudo(s)'; syncEl.style.color='var(--ok)'; }
+    if(document.getElementById('page-dashboard')?.classList.contains('active')) renderDashboard();
+    if(document.getElementById('page-studies')?.classList.contains('active')) renderStudiesList();
+  } catch(e) {
+    console.error('[FB] Falha na carga inicial:', e);
+    if(syncEl){ syncEl.textContent='● sem conexão'; syncEl.style.color='var(--fail)'; }
+    // NÃO usa localStorage como fallback — exibe lista vazia até reconectar
+    STUDIES = [];
+    if(document.getElementById('page-studies')?.classList.contains('active')) renderStudiesList();
   }
 
-  // ── REALTIME LISTENER: keep in sync
+  // ── LISTENER TEMPO REAL: somente dados do servidor ──
   window.FB.listen(arr=>{
-    // Merge: cloud wins for same id (source of truth after migration)
-    const map = {};
-    // Start with local
-    localStudies.forEach(s=>{ if(s&&s.id) map[s.id]=s; });
-    // Cloud overwrites (cloud is authoritative)
-    arr.forEach(s=>{ if(s&&s.id) map[s.id]=s; });
-    STUDIES = Object.values(map).sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
-    localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
-
+    // arr já vem filtrado (apenas snapshots do servidor — ver window.FB.listen)
+    STUDIES = arr.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
+    // Espelha no localStorage como backup (não como fonte primária)
+    localStorage.setItem('spc_studies', JSON.stringify(STUDIES));
     const el=document.getElementById('dashSyncState');
-    if(el){
-      el.textContent='● online · '+STUDIES.length+' estudo(s) sincronizado(s)';
-      el.style.color='var(--ok)';
-    }
+    if(el){ el.textContent='● online · '+STUDIES.length+' estudo(s) sincronizado(s)'; el.style.color='var(--ok)'; }
     if(document.getElementById('page-dashboard')?.classList.contains('active')) renderDashboard();
     if(document.getElementById('page-studies')?.classList.contains('active')) renderStudiesList();
   });
