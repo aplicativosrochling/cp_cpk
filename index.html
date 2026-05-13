@@ -11,6 +11,7 @@
 
 <!-- Firebase Compat — funciona em qualquer navegador sem bundler -->
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-auth-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 
 <script>
@@ -26,33 +27,112 @@
     try {
       var app = firebase.apps.length ? firebase.apps[0] : firebase.initializeApp(firebaseConfig);
       var db = firebase.firestore(app);
-      // SEM enablePersistence — sem cache offline
-      db.settings({ cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED });
+      var auth = firebase.auth(app);
+
+      // IMPORTANTE: db.settings() deve ser chamado ANTES de qualquer acesso à coleção
+      try {
+        db.settings({ cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED });
+      } catch(se) {
+        // settings já foi chamado — ignorar (pode ocorrer em hot-reload)
+        console.warn('[FB] db.settings ignorado:', se.message);
+      }
+
+      // Habilita persistência offline (dados ficam em cache no navegador)
+      db.enablePersistence({ synchronizeTabs: true })
+        .then(function(){ console.log('[FB] Persistência offline ativada.'); })
+        .catch(function(e){
+          if(e.code === 'failed-precondition') {
+            console.warn('[FB] Persistência: múltiplas abas abertas — modo online apenas.');
+          } else if(e.code === 'unimplemented') {
+            console.warn('[FB] Persistência: navegador não suporta.');
+          }
+        });
+
       var col = db.collection("studies");
-      window.FB = {
-        saveStudy: function(s){ return col.doc(s.id).set(s); },
-        deleteStudy: function(id){
-          return col.doc(id).delete()
-            .then(function(){ console.log('[FB] Deletado:', id); })
-            .catch(function(e){ console.error('[FB] Erro delete:', e); throw e; });
+
+      // Testa a conexão com o Firestore assim que possível (sem auth) para diagnóstico
+      function testConnection() {
+        db.collection('_ping').limit(1).get({ source: 'server' })
+          .then(function(){ console.log('[FB] Firestore: conexão OK.'); })
+          .catch(function(e){ console.warn('[FB] Firestore ping falhou (pode ser normal se regras exigem auth):', e.code, e.message); });
+      }
+      setTimeout(testConnection, 1000);
+
+      // FB API exposta SOMENTE após autenticar (regras do Firestore exigem auth)
+      function exposeFB(){
+        if(window.FB) return;
+        window.FB = {
+          saveStudy: function(s){
+            return col.doc(s.id).set(s)
+              .then(function(){ console.log('[FB] Salvo:', s.id); })
+              .catch(function(e){ console.error('[FB] Erro ao salvar:', e.code, e.message); throw e; });
+          },
+          deleteStudy: function(id){
+            return col.doc(id).delete()
+              .then(function(){ console.log('[FB] Deletado:', id); })
+              .catch(function(e){ console.error('[FB] Erro delete:', e.code, e.message); throw e; });
+          },
+          getAll: function(){
+            // Tenta do servidor; se falhar, aceita cache
+            return col.get()
+              .then(function(snap){
+                console.log('[FB] getAll: fromCache='+snap.metadata.fromCache+', docs='+snap.size);
+                var a=[]; snap.forEach(function(d){ if(d.exists) a.push(d.data()); });
+                return a;
+              })
+              .catch(function(e){
+                console.error('[FB] getAll falhou:', e.code, e.message);
+                throw e;
+              });
+          },
+          listen: function(cb){
+            return col.onSnapshot({ includeMetadataChanges: false }, function(snap){
+              console.log('[FB] snapshot: docs='+snap.size);
+              var a=[]; snap.forEach(function(d){ if(d.exists) a.push(d.data()); });
+              cb(a);
+            }, function(e){ console.error('[FB] listener error:', e.code, e.message); });
+          }
+        };
+        console.log('[FB] window.FB exposto com sucesso.');
+        setTimeout(function(){ window.dispatchEvent(new Event('fb-ready')); }, 0);
+      }
+
+      // Auth helpers globais (consumidos pela tela de login)
+      window.AUTH = {
+        // Login com validação de allowedUsers: só emails pré-cadastrados no Firestore podem entrar
+        login: function(email, pass){
+          return db.collection('allowedUsers').doc(email.toLowerCase()).get()
+            .then(function(doc){
+              if(!doc.exists){
+                return Promise.reject({ code: 'auth/not-allowed', message: 'Acesso não autorizado. Contate o administrador.' });
+              }
+              return auth.signInWithEmailAndPassword(email, pass);
+            });
         },
-        getAll: function(){
-          return col.get({ source: 'server' }).then(function(snap){
-            var a=[]; snap.forEach(function(d){ if(d.exists) a.push(d.data()); });
-            console.log('[FB] getAll servidor:', a.length);
-            return a;
-          });
-        },
-        listen: function(cb){
-          return col.onSnapshot({ includeMetadataChanges: true }, function(snap){
-            if(snap.metadata.fromCache){ console.log('[FB] snapshot cache ignorado'); return; }
-            var a=[]; snap.forEach(function(d){ if(d.exists) a.push(d.data()); });
-            console.log('[FB] snapshot servidor:', a.length); cb(a);
-          }, function(e){ console.warn('[FB] listener error:', e); });
-        }
+        reset: function(email){ return auth.sendPasswordResetEmail(email); },
+        logout: function(){ return auth.signOut(); },
+        currentUser: function(){ return auth.currentUser; }
       };
-      setTimeout(function(){ window.dispatchEvent(new Event('fb-ready')); }, 0);
-    } catch(e){ console.error('[FB] init error:', e); }
+
+      auth.onAuthStateChanged(function(user){
+        var gate = document.getElementById('authGate');
+        var appEl = document.querySelector('.app');
+        var userBadge = document.getElementById('userBadge');
+        if(user){
+          console.log('[FB] Usuário autenticado:', user.email, '| UID:', user.uid);
+          if(gate) gate.style.display='none';
+          if(appEl) appEl.style.display='';
+          if(userBadge){ userBadge.textContent = user.email; userBadge.style.display=''; }
+          exposeFB();
+          if(typeof window._fbInit === 'function') window._fbInit();
+        } else {
+          console.log('[FB] Nenhum usuário autenticado.');
+          if(gate) gate.style.display='flex';
+          if(appEl) appEl.style.display='none';
+          if(userBadge) userBadge.style.display='none';
+        }
+      });
+    } catch(e){ console.error('[FB] ERRO CRÍTICO na inicialização:', e); }
   })();
 </script>
 <style>
@@ -1417,7 +1497,60 @@ body{
 
 </head>
 <body>
-<div class="app">
+
+<!-- ══════════ AUTH GATE (login obrigatório) ══════════ -->
+<div id="authGate" style="display:flex;position:fixed;inset:0;z-index:9999;background:linear-gradient(135deg,#1a56db,#0f1623);align-items:center;justify-content:center;font-family:'Plus Jakarta Sans',sans-serif">
+  <div style="background:#fff;border-radius:14px;padding:36px 32px;width:100%;max-width:380px;box-shadow:0 20px 60px rgba(0,0,0,.4)">
+    <div style="text-align:center;margin-bottom:24px">
+      <div style="font-size:28px;font-weight:800;color:#1a56db">🔒 SPC Studio</div>
+      <div style="font-size:13px;color:#5a6280;margin-top:4px">Acesso restrito · faça login para continuar</div>
+    </div>
+    <div id="authMsg" style="display:none;padding:10px 12px;border-radius:8px;font-size:12.5px;margin-bottom:14px"></div>
+    <label style="display:block;font-size:12px;font-weight:600;color:#2d3655;margin-bottom:5px">E-mail</label>
+    <input id="authEmail" type="email" autocomplete="username" style="width:100%;padding:10px 12px;border:1px solid #d0d5e8;border-radius:8px;font-size:14px;margin-bottom:12px">
+    <label style="display:block;font-size:12px;font-weight:600;color:#2d3655;margin-bottom:5px">Senha</label>
+    <input id="authPass" type="password" autocomplete="current-password" style="width:100%;padding:10px 12px;border:1px solid #d0d5e8;border-radius:8px;font-size:14px;margin-bottom:18px">
+    <button id="authLoginBtn" style="width:100%;padding:11px;background:#1a56db;color:#fff;border:0;border-radius:8px;font-weight:700;font-size:14px;cursor:pointer">Entrar</button>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px;font-size:12px">
+      <a href="#" id="authResetLink" style="color:#5a6280;text-decoration:none">Esqueci a senha</a>
+    </div>
+  </div>
+</div>
+
+<script>
+(function(){
+  function show(msg, ok){
+    var m=document.getElementById('authMsg');
+    m.textContent=msg;
+    m.style.display='block';
+    m.style.background = ok ? '#d1fae5' : '#fee2e2';
+    m.style.color = ok ? '#065f46' : '#991b1b';
+  }
+  function ready(fn){ if(document.readyState!='loading') fn(); else document.addEventListener('DOMContentLoaded',fn); }
+  ready(function(){
+    var emailEl=document.getElementById('authEmail');
+    var passEl=document.getElementById('authPass');
+    document.getElementById('authLoginBtn').onclick=function(){
+      if(!window.AUTH) return show('Aguarde a inicialização...',false);
+      window.AUTH.login(emailEl.value.trim(), passEl.value)
+        .catch(function(e){ show('Falha: '+(e.message||e.code), false); });
+    };
+    document.getElementById('authResetLink').onclick=function(ev){
+      ev.preventDefault();
+      if(!emailEl.value) return show('Digite o e-mail primeiro.',false);
+      window.AUTH.reset(emailEl.value.trim())
+        .then(function(){ show('E-mail de redefinição enviado.',true); })
+        .catch(function(e){ show('Falha: '+(e.message||e.code), false); });
+    };
+    [emailEl,passEl].forEach(function(el){
+      el.addEventListener('keydown',function(e){ if(e.key==='Enter') document.getElementById('authLoginBtn').click(); });
+    });
+  });
+})();
+</script>
+
+<div class="app" style="display:none">
+
 
 <!-- ══════════════════════════════════════════════════════
      TOPBAR
@@ -1473,6 +1606,17 @@ body{
     <button class="btn btn-primary btn-sm" onclick="exportPDF()">
       <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor"><path d="M7.5 1H2.5a1 1 0 00-1 1v9a1 1 0 001 1h8a1 1 0 001-1V5l-4-4zm0 1.5L10 5H7.5V2.5zM4 7.5h5v1H4v-1zm0 2h5v1H4v-1z"/></svg>
       PDF
+    </button>
+    <button class="btn btn-ghost btn-sm" onclick="exportBackup()" title="Exportar backup .json de todos os estudos">
+      ⬇️ Backup
+    </button>
+    <button class="btn btn-ghost btn-sm" onclick="document.getElementById('importBackupInput').click()" title="Restaurar a partir de backup .json">
+      ⬆️ Restaurar
+    </button>
+    <input type="file" id="importBackupInput" accept="application/json,.json" style="display:none" onchange="importBackup(this)">
+    <span id="userBadge" style="display:none;font-size:11.5px;color:var(--t2);font-weight:600;padding:0 8px;border-left:1px solid var(--s3);margin-left:4px"></span>
+    <button class="btn btn-ghost btn-sm" onclick="if(confirm('Sair?')) window.AUTH.logout()" title="Sair da conta">
+      🚪 Sair
     </button>
   </div>
 </header>
@@ -4868,44 +5012,111 @@ async function forceFBSync(){
 }
 
 /* Firebase init — fonte única da verdade — sem localStorage como fonte */
-async function _fbInit(){
-  if(!window.FB) return;
+window._fbInit = async function _fbInit(){
+  if(!window.FB){ console.warn('[_fbInit] window.FB não disponível.'); return; }
   const syncEl=document.getElementById('dashSyncState');
-  if(syncEl){syncEl.textContent='🔄 carregando do servidor…';syncEl.style.color='var(--warn)';}
+  if(syncEl){syncEl.textContent='🔄 carregando do Firebase…';syncEl.style.color='var(--warn)';}
   try{
     const srv=await window.FB.getAll();
     STUDIES=srv.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
     localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
-    console.log('[FB] Carga inicial do servidor:',STUDIES.length,'estudos');
+    console.log('[FB] Carga inicial OK:',STUDIES.length,'estudos');
     if(syncEl){syncEl.textContent='● online · '+STUDIES.length+' estudo(s)';syncEl.style.color='var(--ok)';}
     if(document.getElementById('page-dashboard')?.classList.contains('active'))renderDashboard();
     if(document.getElementById('page-studies')?.classList.contains('active'))renderStudiesList();
   }catch(e){
-    console.error('[FB] Falha na carga inicial:',e);
-    if(syncEl){syncEl.textContent='● sem conexão';syncEl.style.color='var(--fail)';}
-    STUDIES=[];
-    if(document.getElementById('page-studies')?.classList.contains('active'))renderStudiesList();
+    console.error('[FB] Falha na carga inicial — código:',e.code,'| mensagem:',e.message);
+    const errMsg = e.code === 'permission-denied'
+      ? '● erro: permissão negada (verifique regras do Firestore)'
+      : e.code === 'unavailable'
+      ? '● sem conexão com o Firebase'
+      : '● erro: ' + (e.code || e.message || 'desconhecido');
+    if(syncEl){syncEl.textContent=errMsg;syncEl.style.color='var(--fail)';}
+    // Fallback para localStorage se disponível
+    try{
+      const local=JSON.parse(localStorage.getItem('spc_studies')||'[]');
+      if(local.length){
+        STUDIES=local;
+        console.log('[FB] Usando cache local:',STUDIES.length,'estudos');
+        if(syncEl){syncEl.textContent='● offline · '+STUDIES.length+' estudo(s) em cache';syncEl.style.color='var(--warn)';}
+        if(document.getElementById('page-dashboard')?.classList.contains('active'))renderDashboard();
+        if(document.getElementById('page-studies')?.classList.contains('active'))renderStudiesList();
+      }
+    }catch(le){}
+    return; // Não tenta o listener se a carga inicial falhou
   }
-  window.FB.listen(arr=>{
-    STUDIES=arr.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
-    localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
-    const el=document.getElementById('dashSyncState');
-    if(el){el.textContent='● online · '+STUDIES.length+' estudo(s) sincronizado(s)';el.style.color='var(--ok)';}
-    if(document.getElementById('page-dashboard')?.classList.contains('active'))renderDashboard();
-    if(document.getElementById('page-studies')?.classList.contains('active'))renderStudiesList();
-  });
+  // Listener de tempo real (apenas atualiza, não bloqueia)
+  try{
+    window.FB.listen(arr=>{
+      STUDIES=arr.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
+      localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
+      const el=document.getElementById('dashSyncState');
+      if(el){el.textContent='● online · '+STUDIES.length+' estudo(s) sincronizado(s)';el.style.color='var(--ok)';}
+      if(document.getElementById('page-dashboard')?.classList.contains('active'))renderDashboard();
+      if(document.getElementById('page-studies')?.classList.contains('active'))renderStudiesList();
+    });
+  }catch(le){ console.warn('[FB] Falha ao iniciar listener:', le); }
+};
+// Init é disparado pelo onAuthStateChanged (após login bem-sucedido)
+
+/* ═══════════ BACKUP / RESTORE ═══════════ */
+function exportBackup(){
+  try{
+    var payload = {
+      app: 'SPC Studio',
+      version: 1,
+      exportedAt: new Date().toISOString(),
+      user: (window.AUTH && window.AUTH.currentUser() && window.AUTH.currentUser().email) || null,
+      count: STUDIES.length,
+      studies: STUDIES
+    };
+    var blob = new Blob([JSON.stringify(payload, null, 2)], {type:'application/json'});
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    var ts = new Date().toISOString().replace(/[:.]/g,'-').slice(0,19);
+    a.href = url; a.download = 'spc-backup-'+ts+'.json';
+    document.body.appendChild(a); a.click();
+    setTimeout(function(){ URL.revokeObjectURL(url); a.remove(); }, 100);
+    if(typeof toast==='function') toast('Backup exportado: '+STUDIES.length+' estudo(s).','ok');
+  }catch(e){
+    console.error('[BACKUP] export error', e);
+    if(typeof toast==='function') toast('Falha ao exportar backup.','fail');
+  }
 }
 
-// Guard: if FB already set before DOMContentLoaded (race condition fix)
-if(window.FB){ _fbInit(); }
-else { window.addEventListener('fb-ready', _fbInit, {once:true}); }
-
-// Fallback: retry after 3s in case event was missed
-setTimeout(()=>{
-  if(window.FB && document.getElementById('dashSyncState')?.textContent === 'offline'){
-    _fbInit();
-  }
-}, 3000);
+function importBackup(input){
+  var file = input.files && input.files[0];
+  input.value = '';
+  if(!file) return;
+  var reader = new FileReader();
+  reader.onload = async function(){
+    try{
+      var data = JSON.parse(reader.result);
+      var arr = Array.isArray(data) ? data : (data.studies || []);
+      if(!Array.isArray(arr) || !arr.length){
+        if(typeof toast==='function') toast('Arquivo inválido ou vazio.','fail'); return;
+      }
+      var msg = 'Restaurar '+arr.length+' estudo(s) do backup?\n\n'+
+                '• Estudos com mesmo ID serão sobrescritos no Firebase.\n'+
+                '• Estudos novos serão adicionados.\n'+
+                '• Estudos existentes que não estão no backup serão MANTIDOS.';
+      if(!confirm(msg)) return;
+      if(!window.FB){ if(typeof toast==='function') toast('Firebase indisponível.','fail'); return; }
+      var ok=0, fail=0;
+      for(var i=0;i<arr.length;i++){
+        var s = arr[i];
+        if(!s || !s.id){ fail++; continue; }
+        try{ await window.FB.saveStudy(s); ok++; }
+        catch(e){ console.error('[BACKUP] save fail', s.id, e); fail++; }
+      }
+      if(typeof toast==='function') toast('Restaurado: '+ok+' ok, '+fail+' falhou.', fail? 'warn':'ok');
+    }catch(e){
+      console.error('[BACKUP] import error', e);
+      if(typeof toast==='function') toast('Arquivo JSON inválido.','fail');
+    }
+  };
+  reader.readAsText(file);
+}
 
 /* ═══════════════════════════════════════════════
    PRINT
