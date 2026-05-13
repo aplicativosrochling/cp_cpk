@@ -1545,11 +1545,9 @@ body{
       </div>
     </div>
 
-    <div class="dash-card">
-      <div class="dash-card-title">Últimos 10 estudos</div>
-      <div style="overflow-x:auto">
-        <table class="dash-tbl" id="dashTable"></table>
-      </div>
+    <div class="dash-card premium">
+      <div class="dash-card-title">Quantidade de Estudos por Part Number</div>
+      <div style="position:relative;height:340px"><canvas id="dashStudiesByPN"></canvas></div>
     </div>
     </div><!-- #classicDashView -->
   </div>
@@ -2542,6 +2540,10 @@ function openFilteredStudies(filter, label){
     const k = filter.slice(4);
     list = list.filter(s=>s.stats&&studyClass(s.stats.Cpk).k===k);
   }
+  else if(filter&&filter.indexOf('pn:')===0){
+    const pn = filter.slice(3);
+    list = list.filter(s=>(s.pn||'—')===pn);
+  }
   list.sort((a,b)=> (b.stats?.Cpk||0) - (a.stats?.Cpk||0));
 
   document.getElementById('filterModalTitle').innerHTML =
@@ -2569,13 +2571,31 @@ function openFilteredStudies(filter, label){
         <td style="text-align:center">${st.n||'—'}</td>
         <td><span style="background:${cls.color}22;color:${cls.color};padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600">${cls.label}</span></td>
         <td style="font-size:10.5px;color:var(--t2)">${date}</td>
-        <td style="text-align:right"><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();closeFilterModal();loadStudyToEditor('${s.id}')">✏</button></td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-ghost btn-xs" title="Editar" onclick="event.stopPropagation();closeFilterModal();loadStudyToEditor('${s.id}')">✏</button>
+          <button class="btn btn-danger btn-xs" title="Excluir" onclick='event.stopPropagation();deleteFromFilterModal(${JSON.stringify(s.id)}, ${JSON.stringify(filter||"")}, ${JSON.stringify(label||"")})'>✕</button>
+        </td>
       </tr>`;
     }).join('');
   }
-  document.getElementById('filterModal').classList.add('active');
+  document.getElementById('filterModal').classList.add('open');
 }
-function closeFilterModal(){ document.getElementById('filterModal').classList.remove('active'); }
+function closeFilterModal(){ document.getElementById('filterModal').classList.remove('open'); }
+function deleteFromFilterModal(id, filter, label){
+  if(!confirm('Excluir este estudo? Esta ação não pode ser desfeita.')) return;
+  const finish = ()=>{
+    const local = JSON.parse(localStorage.getItem('spc_studies')||'[]');
+    localStorage.setItem('spc_studies', JSON.stringify(local.filter(s=>s.id!==id)));
+    STUDIES = STUDIES.filter(s=>s.id!==id);
+    toast('Estudo excluído','warn');
+    try{ renderDashboard(); }catch(e){}
+    try{ if(document.getElementById('page-studies')?.classList.contains('active')) renderStudiesList(); }catch(e){}
+    openFilteredStudies(filter, label); // refresh list
+  };
+  if(window.FB && window.FB.deleteStudy){
+    window.FB.deleteStudy(id).then(finish).catch(()=>{ toast('Erro ao excluir no Firebase.','fail'); });
+  } else { finish(); }
+}
 /* ═══════════════════════════════════════════════
    CLEAN MINIMAL — VIEW TOGGLE & SPARKLINES
 ═══════════════════════════════════════════════ */
@@ -2986,26 +3006,39 @@ function renderDashboard(){
       plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:8,font:{size:10}}}}}
   });
 
-  const last10 = all.slice().sort((a,b)=>new Date(b.savedAt)-new Date(a.savedAt)).slice(0,10);
-  const tbl = document.getElementById('dashTable');
-  if(!last10.length){
-    tbl.innerHTML = '<tbody><tr><td style="text-align:center;color:var(--t3);padding:24px">Nenhum estudo salvo ainda. Crie um na aba Novo Estudo.</td></tr></tbody>';
-  } else {
-    tbl.innerHTML = `<thead><tr>
-      <th>Data</th><th>PN</th><th>Característica</th><th>N</th><th>Cp</th><th>Cpk</th><th>Status</th><th></th>
-    </tr></thead><tbody>${last10.map(s=>{
-      const st=s.stats||{}; const cls=studyClass(st.Cpk);
-      return `<tr>
-        <td>${s.date||new Date(s.savedAt).toLocaleDateString('pt-BR')}</td>
-        <td><b>${s.pn||'—'}</b></td>
-        <td style="font-family:inherit">${s.cn||s.pname||'—'}</td>
-        <td>${st.n||'—'}</td>
-        <td>${st.Cp!=null?st.Cp.toFixed(3):'—'}</td>
-        <td style="color:${cls.color};font-weight:700">${st.Cpk!=null?st.Cpk.toFixed(3):'—'}</td>
-        <td><span class="dash-badge ${cls.k}">${cls.label}</span></td>
-        <td><button class="dash-open-btn" onclick="loadStudyToEditor('${s.id}')">Abrir ✎</button></td>
-      </tr>`;
-    }).join('')}</tbody>`;
+  // Quantidade de Estudos por Part Number
+  const pnCounts = {};
+  all.forEach(s=>{ const pn=s.pn||'—'; pnCounts[pn]=(pnCounts[pn]||0)+1; });
+  const pnEntries = Object.entries(pnCounts).sort((a,b)=>b[1]-a[1]);
+  const pnLabels = pnEntries.map(e=>e[0]);
+  const pnData = pnEntries.map(e=>e[1]);
+  if(DASH_CH.studiesByPN) DASH_CH.studiesByPN.destroy();
+  const pnCanvas = document.getElementById('dashStudiesByPN');
+  if(pnCanvas){
+    const pnCtx = pnCanvas.getContext('2d');
+    DASH_CH.studiesByPN = new Chart(pnCtx,{
+      type:'bar',
+      data:{labels:pnLabels, datasets:[{
+        label:'Estudos', data:pnData,
+        backgroundColor:(c)=>_gradV(c.chart.ctx, c.chart.chartArea, _hexA('#1a56db',1), _hexA('#1a56db',0.55)),
+        borderRadius:8, borderSkipped:false
+      }]},
+      options:{
+        responsive:true, maintainAspectRatio:false,
+        indexAxis: pnLabels.length>12 ? 'y' : 'x',
+        onClick:(evt,els)=>{
+          if(els&&els.length){ const pn=pnLabels[els[0].index]; openFilteredStudies('pn:'+pn, 'Part Number: '+pn); }
+        },
+        onHover:(e,els)=>{ e.native.target.style.cursor = els.length?'pointer':'default'; },
+        plugins:{legend:{display:false},
+          tooltip:{callbacks:{label:c=>c.parsed.y!=null && c.dataset.data ? (c.label+': '+(c.parsed.y||c.parsed.x)+' estudo(s)') : c.formattedValue+' estudo(s)'}}
+        },
+        scales:{
+          x:{beginAtZero:true, ticks:{precision:0, autoSkip:false, maxRotation:60, minRotation:0}},
+          y:{beginAtZero:true, ticks:{precision:0}}
+        }
+      }
+    });
   }
   try{ renderDashboardExtras(all); }catch(e){ console.warn('extras', e); }
 }
