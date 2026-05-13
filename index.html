@@ -99,15 +99,9 @@
 
       // Auth helpers globais (consumidos pela tela de login)
       window.AUTH = {
-        // Login com validação de allowedUsers: só emails pré-cadastrados no Firestore podem entrar
+        // Login direto via Firebase Auth (sem pré-validação no Firestore)
         login: function(email, pass){
-          return db.collection('allowedUsers').doc(email.toLowerCase()).get()
-            .then(function(doc){
-              if(!doc.exists){
-                return Promise.reject({ code: 'auth/not-allowed', message: 'Acesso não autorizado. Contate o administrador.' });
-              }
-              return auth.signInWithEmailAndPassword(email, pass);
-            });
+          return auth.signInWithEmailAndPassword(email, pass);
         },
         reset: function(email){ return auth.sendPasswordResetEmail(email); },
         logout: function(){ return auth.signOut(); },
