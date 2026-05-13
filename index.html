@@ -1842,7 +1842,7 @@ body{
             <div class="sim-step-title">Faixa Real Medida</div>
           </div>
           <div style="background:var(--ok-l);border:1px solid var(--ok-b);border-radius:var(--r);padding:7px 10px;margin-bottom:8px;font-size:10px;color:var(--ok);font-weight:600">
-            📏 Informe o menor e maior valor real do processo. Os dados simulados ficarão nessa faixa.
+            📏 Limites RÍGIDOS: TODOS os valores gerados ficarão entre Mín e Máx. As casas decimais seguem a precisão informada nos campos.
           </div>
           <div class="row2">
             <div class="field">
@@ -2247,6 +2247,27 @@ body{
   </div>
 </div>
 
+<!-- MODAL: Filtered Studies (drill-down dashboard) -->
+<div class="modal-bg" id="filterModal" onclick="if(event.target===this)closeFilterModal()">
+  <div class="modal" style="max-width:920px">
+    <div class="modal-title" id="filterModalTitle" style="display:flex;justify-content:space-between;align-items:center;gap:10px">
+      <span>📋 Estudos</span>
+      <button class="btn btn-ghost btn-sm" onclick="closeFilterModal()">✕</button>
+    </div>
+    <div id="filterModalSub" style="font-size:11px;color:var(--t2);margin-bottom:10px"></div>
+    <div style="overflow-x:auto;max-height:60vh;border:1px solid var(--s3);border-radius:var(--r)">
+      <table class="dash-tbl" id="filterModalTable" style="width:100%;font-size:11.5px">
+        <thead><tr style="background:var(--s1);position:sticky;top:0">
+          <th style="padding:8px">PN</th><th>Nome</th><th>Característica</th>
+          <th style="text-align:right">Cpk</th><th style="text-align:right">Cp</th>
+          <th style="text-align:center">N</th><th>Status</th><th>Data</th><th></th>
+        </tr></thead>
+        <tbody id="filterModalBody"></tbody>
+      </table>
+    </div>
+  </div>
+</div>
+
 </div><!-- .app -->
 
 <!-- ══════════════════════════════════════════════════════
@@ -2384,8 +2405,11 @@ function renderDashboardExtras(all){
     }]},
     options:{
       responsive:true, maintainAspectRatio:false,
+      onClick:(e,els)=>{ if(els&&els.length){ const s=sorted[els[0].index]; if(s) openStudyModal(s.id); } },
+      onHover:(e,els)=>{ e.native.target.style.cursor=els.length?'pointer':'default'; },
       plugins:{legend:{display:false},
-        tooltip:{backgroundColor:'#0f1623',padding:10,cornerRadius:8,titleFont:{weight:'600'}}},
+        tooltip:{backgroundColor:'#0f1623',padding:10,cornerRadius:8,titleFont:{weight:'600'},
+          callbacks:{label:c=>'Cpk: '+c.parsed.y.toFixed(3)+' · '+(sorted[c.dataIndex]?.pn||'')+' · clique'}}},
       scales:{
         y:{beginAtZero:true, grid:{color:'rgba(15,22,35,0.06)'}, ticks:{font:{size:11}}},
         x:{grid:{display:false}, ticks:{font:{size:10}, maxRotation:0, autoSkip:true, maxTicksLimit:10}}
@@ -2403,8 +2427,9 @@ function renderDashboardExtras(all){
   });
 
   // === 2) SCATTER Cp vs Cpk ===
-  const pts = valid.filter(s=>s.stats.Cp!=null).map(s=>({
-    x:s.stats.Cp, y:s.stats.Cpk, pn:s.pn||'—',
+  const ptsValid = valid.filter(s=>s.stats.Cp!=null);
+  const pts = ptsValid.map(s=>({
+    x:s.stats.Cp, y:s.stats.Cpk, pn:s.pn||'—', _id:s.id,
     color: studyClass(s.stats.Cpk).color
   }));
   if(DASH_CH4.scatter) DASH_CH4.scatter.destroy();
@@ -2420,9 +2445,11 @@ function renderDashboardExtras(all){
     }]},
     options:{
       responsive:true, maintainAspectRatio:false,
+      onClick:(e,els)=>{ if(els&&els.length){ const p=pts[els[0].index]; if(p&&p._id) openStudyModal(p._id); } },
+      onHover:(e,els)=>{ e.native.target.style.cursor=els.length?'pointer':'default'; },
       plugins:{legend:{display:false},
         tooltip:{backgroundColor:'#0f1623',padding:10,cornerRadius:8,
-          callbacks:{label:c=>`${c.raw.pn}  Cp:${c.raw.x.toFixed(2)}  Cpk:${c.raw.y.toFixed(2)}`}}},
+          callbacks:{label:c=>`${c.raw.pn}  Cp:${c.raw.x.toFixed(2)}  Cpk:${c.raw.y.toFixed(2)} · clique`}}},
       scales:{
         x:{title:{display:true,text:'Cp',font:{size:11,weight:'600'}}, grid:{color:'rgba(15,22,35,0.06)'}},
         y:{title:{display:true,text:'Cpk',font:{size:11,weight:'600'}}, grid:{color:'rgba(15,22,35,0.06)'}, beginAtZero:true}
@@ -2459,8 +2486,10 @@ function renderDashboardExtras(all){
     }]},
     options:{
       indexAxis:'y', responsive:true, maintainAspectRatio:false,
+      onClick:(e,els)=>{ if(els&&els.length){ const s=top10[els[0].index]; if(s) openStudyModal(s.id); } },
+      onHover:(e,els)=>{ e.native.target.style.cursor=els.length?'pointer':'default'; },
       plugins:{legend:{display:false},
-        tooltip:{backgroundColor:'#0f1623',padding:10,cornerRadius:8}},
+        tooltip:{backgroundColor:'#0f1623',padding:10,cornerRadius:8,callbacks:{label:c=>'Cpk: '+c.parsed.x.toFixed(3)+' · clique p/ abrir'}}},
       scales:{
         x:{beginAtZero:true, grid:{color:'rgba(15,22,35,0.06)'}, ticks:{font:{size:11}}},
         y:{grid:{display:false}, ticks:{font:{size:11,weight:'600'}}}
@@ -2485,6 +2514,14 @@ function renderDashboardExtras(all){
     },
     options:{
       responsive:true, maintainAspectRatio:false,
+      onClick:(e,els)=>{
+        if(els&&els.length){
+          const map=['gold','ok','warn','fail'];
+          const lblMap=['Classe Mundial (Cpk≥1.67)','Excelente (Cpk≥1.33)','Aceitável (Cpk≥1.00)','Reprovado (Cpk<1.00)'];
+          openFilteredStudies('cls:'+map[els[0].index], lblMap[els[0].index]);
+        }
+      },
+      onHover:(e,els)=>{ e.native.target.style.cursor=els.length?'pointer':'default'; },
       plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:10,font:{size:11,weight:'500'}}},
         tooltip:{backgroundColor:'#0f1623',padding:10,cornerRadius:8}},
       scales:{r:{grid:{color:'rgba(15,22,35,0.08)'}, angleLines:{color:'rgba(15,22,35,0.08)'},
@@ -2492,6 +2529,53 @@ function renderDashboardExtras(all){
     }
   });
 }
+
+/* ═══════════════════════════════════════════════
+   FILTERED STUDIES MODAL (drill-down do dashboard)
+═══════════════════════════════════════════════ */
+function openFilteredStudies(filter, label){
+  let list = STUDIES.slice();
+  if(filter==='approved')      list = list.filter(s=>s.stats&&s.stats.Cpk>=1.33);
+  else if(filter==='failed')   list = list.filter(s=>s.stats&&(s.stats.Cpk==null||s.stats.Cpk<1.33));
+  else if(filter==='excellent')list = list.filter(s=>s.stats&&s.stats.Cpk>=1.67);
+  else if(filter&&filter.indexOf('cls:')===0){
+    const k = filter.slice(4);
+    list = list.filter(s=>s.stats&&studyClass(s.stats.Cpk).k===k);
+  }
+  list.sort((a,b)=> (b.stats?.Cpk||0) - (a.stats?.Cpk||0));
+
+  document.getElementById('filterModalTitle').innerHTML =
+    `<span>📋 ${label||'Estudos'}  <span style="font-size:12px;color:var(--t2);font-weight:500">(${list.length})</span></span>
+     <button class="btn btn-ghost btn-sm" onclick="closeFilterModal()">✕</button>`;
+  document.getElementById('filterModalSub').textContent =
+    list.length ? 'Clique em qualquer linha para abrir o estudo completo.' : 'Nenhum estudo nesta categoria.';
+
+  const body = document.getElementById('filterModalBody');
+  if(!list.length){
+    body.innerHTML = '<tr><td colspan="9" style="text-align:center;padding:30px;color:var(--t3);font-style:italic">Sem estudos</td></tr>';
+  } else {
+    body.innerHTML = list.map(s=>{
+      const st = s.stats||{};
+      const cls = studyClass(st.Cpk);
+      const cpk = st.Cpk!=null?st.Cpk.toFixed(3):'—';
+      const cp  = st.Cp !=null?st.Cp.toFixed(3):'—';
+      const date = s.date || (s.savedAt? new Date(s.savedAt).toLocaleDateString('pt-BR') : '—');
+      return `<tr style="cursor:pointer;border-bottom:1px solid var(--s2)" onclick="closeFilterModal();openStudyModal('${s.id}')">
+        <td style="padding:8px;font-family:var(--mono)">${s.pn||'—'}</td>
+        <td>${s.pname||'—'}</td>
+        <td style="font-size:10.5px;color:var(--t2)">${s.cn||s.cc||'—'}</td>
+        <td style="text-align:right;font-family:var(--mono);color:${cls.color};font-weight:700">${cpk}</td>
+        <td style="text-align:right;font-family:var(--mono)">${cp}</td>
+        <td style="text-align:center">${st.n||'—'}</td>
+        <td><span style="background:${cls.color}22;color:${cls.color};padding:2px 7px;border-radius:10px;font-size:10px;font-weight:600">${cls.label}</span></td>
+        <td style="font-size:10.5px;color:var(--t2)">${date}</td>
+        <td style="text-align:right"><button class="btn btn-ghost btn-xs" onclick="event.stopPropagation();closeFilterModal();loadStudyToEditor('${s.id}')">✏</button></td>
+      </tr>`;
+    }).join('');
+  }
+  document.getElementById('filterModal').classList.add('active');
+}
+function closeFilterModal(){ document.getElementById('filterModal').classList.remove('active'); }
 /* ═══════════════════════════════════════════════
    CLEAN MINIMAL — VIEW TOGGLE & SPARKLINES
 ═══════════════════════════════════════════════ */
@@ -2824,15 +2908,15 @@ function renderDashboard(){
   const uniquePN = new Set(all.map(s=>s.pn).filter(Boolean)).size;
 
   const kpis = [
-    {lbl:'Total Estudos', val:total, sub:'Salvos no sistema', cls:''},
-    {lbl:'Aprovados', val:approved, sub:'Cpk ≥ 1.33', cls:'ok'},
-    {lbl:'Reprovados', val:failed, sub:'Cpk < 1.33', cls:'fail'},
-    {lbl:'Excelentes', val:excellent, sub:'Cpk ≥ 1.67', cls:'gold'},
-    {lbl:'Cpk Médio', val:avgCpk!=null?avgCpk.toFixed(3):'—', sub:'Média geral', cls:avgCpk==null?'':avgCpk>=1.67?'gold':avgCpk>=1.33?'ok':avgCpk>=1?'warn':'fail'},
-    {lbl:'Part Numbers', val:uniquePN, sub:'Únicos', cls:''}
+    {lbl:'Total Estudos', val:total, sub:'Salvos no sistema · clique', cls:'', flt:'all'},
+    {lbl:'Aprovados', val:approved, sub:'Cpk ≥ 1.33 · clique', cls:'ok', flt:'approved'},
+    {lbl:'Reprovados', val:failed, sub:'Cpk < 1.33 · clique', cls:'fail', flt:'failed'},
+    {lbl:'Excelentes', val:excellent, sub:'Cpk ≥ 1.67 · clique', cls:'gold', flt:'excellent'},
+    {lbl:'Cpk Médio', val:avgCpk!=null?avgCpk.toFixed(3):'—', sub:'Média geral · clique p/ ranking', cls:avgCpk==null?'':avgCpk>=1.67?'gold':avgCpk>=1.33?'ok':avgCpk>=1?'warn':'fail', flt:'all'},
+    {lbl:'Part Numbers', val:uniquePN, sub:'Únicos · clique', cls:'', flt:'all'}
   ];
   document.getElementById('kpiGrid').innerHTML = kpis.map(k=>`
-    <div class="kpi-card ${k.cls}">
+    <div class="kpi-card ${k.cls}" style="cursor:pointer" onclick="openFilteredStudies('${k.flt}','${k.lbl}')" title="Clique para ver tabela detalhada">
       <div class="kpi-lbl">${k.lbl}</div>
       <div class="kpi-val">${k.val}</div>
       <div class="kpi-sub">${k.sub}</div>
@@ -2854,8 +2938,12 @@ function renderDashboard(){
       borderRadius:8, borderSkipped:false}]},
     options:{
       responsive:true, maintainAspectRatio:false,
+      onClick:(evt,els,chart)=>{
+        if(els&&els.length){ const i=els[0].index; const s=last15[i]; if(s) openStudyModal(s.id); }
+      },
+      onHover:(e,els)=>{ e.native.target.style.cursor = els.length?'pointer':'default'; },
       plugins:{legend:{display:false},
-        tooltip:{callbacks:{label:c=>'Cpk: '+(c.parsed.y).toFixed(3)+' — '+(last15[c.dataIndex].pname||'')}}
+        tooltip:{callbacks:{label:c=>'Cpk: '+(c.parsed.y).toFixed(3)+' — '+(last15[c.dataIndex].pname||'')+' · clique p/ abrir'}}
       },
       scales:{y:{beginAtZero:true, suggestedMax:Math.max(2, Math.max.apply(null,data.concat([1.7]))+0.2)}}
     },
@@ -2887,6 +2975,14 @@ function renderDashboard(){
         backgroundColor:['#d4af37','#1f9d55','#e08e0b','#d23434'], borderWidth:2, borderColor:'#fff'}]
     },
     options:{responsive:true,maintainAspectRatio:false,cutout:'60%',
+      onClick:(e,els)=>{
+        if(els&&els.length){
+          const map=['gold','ok','warn','fail'];
+          const lblMap=['Classe Mundial (Cpk≥1.67)','Excelente (Cpk≥1.33)','Aceitável (Cpk≥1.00)','Reprovado (Cpk<1.00)'];
+          openFilteredStudies('cls:'+map[els[0].index], lblMap[els[0].index]);
+        }
+      },
+      onHover:(e,els)=>{ e.native.target.style.cursor = els.length?'pointer':'default'; },
       plugins:{legend:{position:'bottom',labels:{boxWidth:10,padding:8,font:{size:10}}}}}
   });
 
@@ -4306,116 +4402,120 @@ function generateCapableData(mu, lsl, usl, stype, n, targetCpk, decPlaces, found
   targetCpk = targetCpk || 1.67;
   n         = n || 50;
 
-  // Casas decimais: usa o maximo entre todos os valores informados
+  // Casas decimais: usa o maximo entre todos os valores informados (RESPEITA precisão pre-estabelecida)
   var dec = decPlaces != null ? decPlaces :
             Math.max(countDec(mu), countDec(lsl), countDec(usl),
                      countDec(foundMin), countDec(foundMax));
   dec = Math.max(0, Math.min(8, dec));
   var roundTo = Math.pow(10, dec);
+  var step = 1 / roundTo;
 
-  // Centro real = media da faixa encontrada (se informada) ou nominal
   var hasFoundRange = (foundMin != null && foundMax != null &&
                        !isNaN(foundMin) && !isNaN(foundMax));
+
+  // LIMITES RÍGIDOS: combina LSL/USL com min/max informados (o mais restritivo vence)
+  var lo = -Infinity, hi = Infinity;
+  if (lsl != null) lo = lsl;
+  if (usl != null) hi = usl;
+  if (hasFoundRange) {
+    lo = Math.max(lo, foundMin);
+    hi = Math.min(hi, foundMax);
+  }
+  if (!isFinite(lo) && !isFinite(hi)) {
+    // sem nenhum limite — fallback para ±5% em torno do nominal
+    lo = mu - Math.abs(mu)*0.05 - 1;
+    hi = mu + Math.abs(mu)*0.05 + 1;
+  } else if (!isFinite(lo)) {
+    lo = hi - Math.abs(hi - mu) * 2 - 1;
+  } else if (!isFinite(hi)) {
+    hi = lo + Math.abs(mu - lo) * 2 + 1;
+  }
+  if (hi <= lo) { return []; }
+
+  // Centro: média da faixa real (se informada) ou nominal — clampado em [lo,hi]
   var muReal = hasFoundRange ? (foundMin + foundMax) / 2 : mu;
+  muReal = Math.max(lo, Math.min(hi, muReal));
 
-  // Amplitude da faixa encontrada (define dispersao realista)
-  var foundRange = hasFoundRange ? Math.abs(foundMax - foundMin) : 0;
+  // semiTol relativo ao SPEC (LSL/USL) — necessário para Cpk
+  var semiTolSpec;
+  if (lsl != null && usl != null)      semiTolSpec = Math.min(usl - muReal, muReal - lsl);
+  else if (usl != null)                semiTolSpec = usl - muReal;
+  else if (lsl != null)                semiTolSpec = muReal - lsl;
+  else                                 semiTolSpec = (hi - lo) / 2;
+  if (semiTolSpec <= 0) semiTolSpec = (hi - lo) / 2;
 
-  // semiTol = distancia do centro real ao limite mais proximo
-  var semiTol;
-  if (lsl != null && usl != null) {
-    var dL = muReal - lsl, dU = usl - muReal;
-    semiTol = Math.min(dL > 0 ? dL : (usl-lsl)/2, dU > 0 ? dU : (usl-lsl)/2);
-    if (semiTol <= 0) semiTol = (usl - lsl) / 2;
-  } else if (usl != null) {
-    semiTol = usl - muReal;
-    if (semiTol <= 0) semiTol = Math.abs(muReal) * 0.05 || 0.1;
-  } else if (lsl != null) {
-    semiTol = muReal - lsl;
-    if (semiTol <= 0) semiTol = Math.abs(muReal) * 0.05 || 0.1;
-  } else {
-    semiTol = (foundRange > 0) ? foundRange : Math.abs(muReal) * 0.05 || 0.1;
-  }
-
-  // sigma alvo para atingir EXATAMENTE targetCpk: σ = semiTol / (3·Cpk)
-  var sigmaTarget = semiTol / (3 * targetCpk);
-  var sigmaBase   = sigmaTarget;
-  // Se há faixa real informada, usar ela como fonte primária de dispersão
-  // (foundRange ≈ 6σ para um processo normal centrado → σ ≈ range/6).
-  // Combinamos com o sigma alvo (média geométrica) para manter Cpk próximo do alvo
-  // sem espremer os dados em poucos bins.
-  if (foundRange > 0) {
-    var sigmaFaixa = foundRange / 5.5; // entre 5σ e 6σ — realista
-    sigmaBase = Math.sqrt(sigmaTarget * sigmaFaixa); // média geométrica
-  }
-  var minSigma  = 1.5 / roundTo; // ≥ 1.5 unidades de resolução p/ ter variação visível
+  // sigma alvo p/ atingir EXATAMENTE targetCpk: σ = semiTolSpec / (3·Cpk)
+  // Mas também precisa caber na faixa real informada (foundRange ≈ 6σ)
+  var sigmaTarget = semiTolSpec / (3 * targetCpk);
+  var foundRange  = hi - lo;
+  var sigmaMaxFit = foundRange / 6.5; // mantém ~99% dos pontos dentro
+  var sigmaBase   = Math.min(sigmaTarget, sigmaMaxFit);
+  var minSigma    = step * 1.2;
   if (sigmaBase < minSigma) sigmaBase = minSigma;
 
-  // Parametros de processo realista (mais variabilidade natural)
-  var driftAmp   = sigmaBase * 0.35;
-  var driftSpeed = 0.04 + Math.random() * 0.06;
-  var driftPhase = Math.random() * 2 * Math.PI;
-  var spikeProb  = 0.03;
-  var spikeMax   = sigmaBase * 1.8;
-  // Pequena variação de sigma ao longo do tempo (heterocedasticidade leve)
-  var sigmaJitter = 0.15;
-
-  var lo = (lsl != null) ? lsl : -Infinity;
-  var hi = (usl != null) ? usl :  Infinity;
-
-  var raw = [];
-  var maxIter = n * 3000;
-  var attempts = 0;
-  while (raw.length < n && attempts++ < maxIter) {
-    var i = raw.length;
-    var sLocal = sigmaBase * (1 + sigmaJitter * Math.sin(0.13 * i + driftPhase * 0.5));
-    var drift = driftAmp * Math.sin(2 * Math.PI * driftSpeed * i + driftPhase);
-    var noise = rNorm(0, sLocal);
-    var spike = 0;
-    if (Math.random() < spikeProb) {
-      spike = (Math.random() < 0.5 ? 1 : -1) * spikeMax * (0.4 + Math.random() * 0.6);
-    }
-    var v  = muReal + drift + noise + spike;
-    var vr = Math.round(v * roundTo) / roundTo;
-    // Aceita tudo dentro de LSL/USL — não usa foundMin/foundMax como hard clamp
-    // (isso é o que estava criando picos artificiais nas bordas)
-    if (vr >= lo && vr <= hi) raw.push(vr);
-  }
-  while (raw.length < n) {
-    var fb = Math.round((muReal + rNorm(0, sigmaBase * 0.5)) * roundTo) / roundTo;
-    fb = Math.max(isFinite(lo)?lo:fb, Math.min(isFinite(hi)?hi:fb, fb));
-    raw.push(fb);
-  }
-
-  // Verificacao final de Cpk — reescala SUAVEMENTE se necessário (sem clamp duro)
-  var xb = raw.reduce(function(a,b){return a+b;},0) / raw.length;
-  var vr2= raw.reduce(function(a,v){return a+(v-xb)*(v-xb);},0)/(raw.length-1);
-  var s2 = Math.sqrt(vr2);
-  if (s2 > 0) {
-    var cpkCalc = Infinity;
-    if (lsl!=null&&usl!=null) cpkCalc=Math.min((usl-xb)/(3*s2),(xb-lsl)/(3*s2));
-    else if (usl!=null)       cpkCalc=(usl-xb)/(3*s2);
-    else if (lsl!=null)       cpkCalc=(xb-lsl)/(3*s2);
-    if (isFinite(cpkCalc) && cpkCalc > 0) {
-      var ratio = cpkCalc / targetCpk;
-      // Janela mais ampla → menos reescalonamento → mais natural
-      if (ratio < 0.90 || ratio > 1.20) {
-        var scale = ratio;
-        scale = Math.max(0.5, Math.min(2.0, scale));
-        raw = raw.map(function(v) {
-          var c = xb + (v - xb) * scale;
-          var cr = Math.round(c * roundTo) / roundTo;
-          // Reflete em vez de clampar (evita pico na borda)
-          if (isFinite(lo) && cr < lo) cr = lo + (lo - cr);
-          if (isFinite(hi) && cr > hi) cr = hi - (cr - hi);
-          cr = Math.max(isFinite(lo)?lo:cr, Math.min(isFinite(hi)?hi:cr, cr));
-          return Math.round(cr * roundTo) / roundTo;
-        });
+  // Geração com clamp HARD em [lo,hi] usando reflexão (não aceitação-rejeição que enviesa)
+  function genOnce(sig) {
+    var driftAmp   = sig * 0.25;
+    var driftSpeed = 0.04 + Math.random() * 0.05;
+    var driftPhase = Math.random() * 2 * Math.PI;
+    var arr = [];
+    for (var i = 0; i < n; i++) {
+      var sLocal = sig * (1 + 0.10 * Math.sin(0.13 * i + driftPhase * 0.5));
+      var drift  = driftAmp * Math.sin(2 * Math.PI * driftSpeed * i + driftPhase);
+      var v = muReal + drift + rNorm(0, sLocal);
+      // Reflexão p/ manter dentro [lo,hi] sem pico de borda
+      var span = hi - lo;
+      while (v < lo || v > hi) {
+        if (v < lo) v = lo + (lo - v);
+        if (v > hi) v = hi - (v - hi);
+        if (v < lo - span || v > hi + span) { v = lo + Math.random()*span; break; }
       }
+      v = Math.max(lo, Math.min(hi, v));
+      arr.push(Math.round(v * roundTo) / roundTo);
     }
+    return arr;
   }
 
-  // Sincronizar DEC global
+  function calcCpk(arr) {
+    var xb = arr.reduce(function(a,b){return a+b;},0)/arr.length;
+    var s2 = Math.sqrt(arr.reduce(function(a,v){return a+(v-xb)*(v-xb);},0)/(arr.length-1));
+    if (s2 <= 0) return Infinity;
+    var c = Infinity;
+    if (lsl!=null&&usl!=null) c = Math.min((usl-xb)/(3*s2),(xb-lsl)/(3*s2));
+    else if (usl!=null)       c = (usl-xb)/(3*s2);
+    else if (lsl!=null)       c = (xb-lsl)/(3*s2);
+    return c;
+  }
+
+  // Itera ajustando sigma até atingir Cpk >= targetCpk (mantendo dentro de [lo,hi])
+  var raw = genOnce(sigmaBase);
+  var sigCur = sigmaBase;
+  for (var k = 0; k < 14; k++) {
+    var c = calcCpk(raw);
+    if (isFinite(c) && c >= targetCpk * 1.005 && c <= targetCpk * 1.40) break;
+    if (!isFinite(c)) break;
+    var ratio = c / targetCpk;
+    // Cpk baixo demais → reduz sigma. Cpk alto demais → aumenta sigma
+    if (ratio < 1) sigCur = sigCur * Math.max(0.55, ratio * 0.92);
+    else           sigCur = sigCur * Math.min(1.60, ratio * 1.05);
+    sigCur = Math.max(minSigma, Math.min(sigmaMaxFit, sigCur));
+    raw = genOnce(sigCur);
+  }
+
+  // Garantia final: se ainda não atingiu, reescala em torno da média (clampando em [lo,hi])
+  var cFinal = calcCpk(raw);
+  if (isFinite(cFinal) && cFinal < targetCpk) {
+    var xb = raw.reduce(function(a,b){return a+b;},0)/raw.length;
+    var scale = (cFinal / targetCpk) * 0.95;
+    scale = Math.max(0.3, Math.min(1, scale));
+    raw = raw.map(function(v){
+      var c2 = xb + (v - xb) * scale;
+      c2 = Math.max(lo, Math.min(hi, c2));
+      return Math.round(c2 * roundTo) / roundTo;
+    });
+  }
+
+  // Sincronizar DEC global com a precisão pré-estabelecida
   if (dec !== DEC) {
     DEC = dec;
     var dd = document.getElementById('decDisplay');
