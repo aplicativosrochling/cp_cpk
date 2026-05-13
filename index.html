@@ -14,14 +14,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore-compat.js"></script>
 
 <script>
-  // ══════════════════════════════════════════════════════════════════
-  // FIREBASE — FONTE ÚNICA DA VERDADE
-  // • Sem persistência offline (disableNetwork nunca é chamado)
-  // • Sem cache local como fonte primária
-  // • Toda leitura forçada via source:'server'
-  // • Listener ignora snapshots oriundos do cache
-  // • localStorage usado APENAS como backup temporário de UI
-  // ══════════════════════════════════════════════════════════════════
   (function() {
     var firebaseConfig = {
       apiKey:            "AIzaSyBpPzWg7u2psTpZnEbQG4P-hFwdFBWg9Ws",
@@ -31,82 +23,36 @@
       messagingSenderId: "1006032759926",
       appId:             "1:1006032759926:web:3165c115614a341ba18357"
     };
-
     try {
-      var app = firebase.apps.length
-        ? firebase.apps[0]
-        : firebase.initializeApp(firebaseConfig);
-
+      var app = firebase.apps.length ? firebase.apps[0] : firebase.initializeApp(firebaseConfig);
       var db = firebase.firestore(app);
-
-      // ── DESABILITAR cache offline completamente ──
-      // Firestore compat: disablePersistence não existe, mas basta NÃO chamar
-      // enablePersistence() — o padrão SDK web é sem persistência offline.
-      // Garante que leituras { source:'server' } não caiam no cache IndexedDB.
+      // SEM enablePersistence — sem cache offline
       db.settings({ cacheSizeBytes: firebase.firestore.CACHE_SIZE_UNLIMITED });
-
       var col = db.collection("studies");
-
       window.FB = {
-
-        // ── Salva / atualiza — vai direto ao servidor ──
-        saveStudy: function(s) {
-          return col.doc(s.id).set(s);
-        },
-
-        // ── Deleta — aguarda confirmação do servidor ──
-        deleteStudy: function(id) {
+        saveStudy: function(s){ return col.doc(s.id).set(s); },
+        deleteStudy: function(id){
           return col.doc(id).delete()
-            .then(function() {
-              console.log('[FB] Deletado no servidor:', id);
-            })
-            .catch(function(err) {
-              console.error('[FB] Erro ao deletar:', err);
-              throw err;
-            });
+            .then(function(){ console.log('[FB] Deletado:', id); })
+            .catch(function(e){ console.error('[FB] Erro delete:', e); throw e; });
         },
-
-        // ── Lê TUDO do servidor (nunca do cache) ──
-        getAll: function() {
-          return col.get({ source: 'server' })
-            .then(function(snap) {
-              var arr = [];
-              snap.forEach(function(d) { if (d.exists) arr.push(d.data()); });
-              console.log('[FB] getAll() do servidor:', arr.length, 'estudos');
-              return arr;
-            });
-          // Sem fallback para cache — se o servidor não responder, propaga o erro
+        getAll: function(){
+          return col.get({ source: 'server' }).then(function(snap){
+            var a=[]; snap.forEach(function(d){ if(d.exists) a.push(d.data()); });
+            console.log('[FB] getAll servidor:', a.length);
+            return a;
+          });
         },
-
-        // ── Listener em tempo real — ignora snapshots de cache ──
-        listen: function(cb) {
-          return col.onSnapshot(
-            { includeMetadataChanges: true },
-            function(snap) {
-              // Só processa quando os dados vêm do servidor
-              if (snap.metadata.fromCache) {
-                console.log('[FB] Snapshot ignorado (origem: cache local)');
-                return;
-              }
-              var arr = [];
-              snap.forEach(function(d) { if (d.exists) arr.push(d.data()); });
-              console.log('[FB] Snapshot do servidor:', arr.length, 'estudos');
-              cb(arr);
-            },
-            function(err) {
-              console.warn('[FB] Listener error:', err);
-            }
-          );
+        listen: function(cb){
+          return col.onSnapshot({ includeMetadataChanges: true }, function(snap){
+            if(snap.metadata.fromCache){ console.log('[FB] snapshot cache ignorado'); return; }
+            var a=[]; snap.forEach(function(d){ if(d.exists) a.push(d.data()); });
+            console.log('[FB] snapshot servidor:', a.length); cb(a);
+          }, function(e){ console.warn('[FB] listener error:', e); });
         }
       };
-
-      setTimeout(function() {
-        window.dispatchEvent(new Event('fb-ready'));
-      }, 0);
-
-    } catch(e) {
-      console.error('[FB] Init error:', e);
-    }
+      setTimeout(function(){ window.dispatchEvent(new Event('fb-ready')); }, 0);
+    } catch(e){ console.error('[FB] init error:', e); }
   })();
 </script>
 <style>
@@ -618,11 +564,13 @@ select{cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%
 @media print{
 
   /* ── 1. PAGE CONFIG: A4 Portrait ── */
+  /* margin:0 suprime cabecalho/rodape automatico do browser (URL, numero pagina) */
   @page{
     size: A4 portrait;
-    margin: 10mm 12mm 14mm 12mm;
+    margin: 0;
   }
-  @page:first{ margin-top: 6mm; }
+  @page:first{ margin: 0; }
+  html, body { padding: 10mm 12mm 12mm 12mm !important; }
 
   /* ── 2. FORCE COLORS ── */
   *{ -webkit-print-color-adjust:exact!important; print-color-adjust:exact!important; box-sizing:border-box!important; }
@@ -633,7 +581,6 @@ select{cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%
     font-size:9.5px!important;
     width:100%!important;
     margin:0!important;
-    padding:0!important;
     line-height:1.45!important;
   }
 
@@ -641,7 +588,10 @@ select{cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%
   .topbar, .sidebar, .topbar-right, .nav-tab, .topbar-tabs,
   .btn, .itabs, .itab-pane, .dropzone, .data-bar, .chips-scroll,
   .oos-alert, .dec-ctrl, .top-clock, #page-studies, .modal-bg,
-  .toast, #oosAlert, .card-hd-extra, .study-card-actions, .studies-page
+  .toast, #oosAlert, .card-hd-extra, .study-card-actions, .studies-page,
+  #dataTableWrap, .dash-view-toggle,
+  #cmDashView, #classicDashView, .cm-modal-bg,
+  #page-dashboard
   { display:none!important; }
 
   /* ── 5. SINGLE COLUMN LAYOUT ── */
@@ -968,6 +918,31 @@ select{cursor:pointer;appearance:none;background-image:url("data:image/svg+xml,%
 /* ══════════════════════════════════════════════════════
    ANIMATIONS
 ══════════════════════════════════════════════════════ */
+/* ══════════════════════════════════════════════════════
+   SIMULATOR STEPS — redesigned
+══════════════════════════════════════════════════════ */
+.sim-step{
+  background:var(--s0);border:1px solid var(--s3);border-radius:10px;
+  padding:12px 14px;margin-bottom:10px;
+  box-shadow:0 1px 4px rgba(15,22,35,0.06);
+}
+.sim-step-hd{
+  display:flex;align-items:center;gap:9px;
+  margin-bottom:10px;padding-bottom:8px;
+  border-bottom:1px solid var(--s2);
+}
+.sim-step-num{
+  width:22px;height:22px;border-radius:50%;flex-shrink:0;
+  background:var(--blue);color:#fff;
+  font-size:11px;font-weight:800;
+  display:flex;align-items:center;justify-content:center;
+  box-shadow:0 2px 8px rgba(26,86,219,0.35);
+}
+.sim-step-title{
+  font-size:11px;font-weight:700;color:var(--t0);
+  text-transform:uppercase;letter-spacing:.8px;
+}
+
 @keyframes fadeUp{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
 .kpi,.chart-card,.banner,.stats-wrap,.study-header{animation:fadeUp .3s ease both}
 .kpi:nth-child(1){animation-delay:.04s}.kpi:nth-child(2){animation-delay:.08s}
@@ -1176,8 +1151,270 @@ body{
   .dash-charts-4{grid-template-columns:1fr}
   .dash-wrap{padding:16px}
 }
-@media print{body{padding-left:0}.topbar-tabs{display:none}}
+@media print{
+  body{padding-left:0!important}
+  .topbar-tabs,.topbar,.sidebar,.topbar-right,
+  .dash-view-toggle,#cmDashView,#classicDashView,
+  .cm-modal-bg,#page-dashboard,#page-studies,
+  #dataTableWrap,.data-bar,.oos-alert{display:none!important}
+}
+
+/* ══════════════════════════════════════════════════════
+   OPÇÃO 2 — CLEAN MINIMAL (Tableau / Figma style)
+   Cards com sparkline + números grandes + modal fullscreen
+══════════════════════════════════════════════════════ */
+
+/* ── View toggle strip ── */
+.dash-view-toggle{
+  display:inline-flex;gap:2px;background:#f0f2f8;
+  border-radius:9px;padding:3px;border:1px solid #e3e6f0;
+}
+.dvt-btn{
+  display:inline-flex;align-items:center;gap:6px;
+  padding:7px 16px;border-radius:7px;font-size:12px;font-weight:600;
+  border:none;cursor:pointer;transition:all .18s ease;color:#5a6280;background:transparent;
+}
+.dvt-btn.active{background:#fff;color:#1a56db;box-shadow:0 2px 8px rgba(15,22,35,0.10)}
+.dvt-btn:hover:not(.active){background:rgba(255,255,255,0.6);color:#2d3655}
+
+/* ── Clean minimal KPI grid ── */
+.cm-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(260px,1fr));
+  gap:16px;
+}
+@media(max-width:900px){.cm-grid{grid-template-columns:1fr 1fr}}
+@media(max-width:560px){.cm-grid{grid-template-columns:1fr}}
+
+/* ── Clean KPI card ── */
+.cm-card{
+  background:#fff;border:1px solid #eaecf5;border-radius:18px;
+  padding:22px 22px 18px;
+  box-shadow:0 1px 3px rgba(15,22,35,0.04),0 4px 16px rgba(15,22,35,0.04);
+  cursor:pointer;position:relative;overflow:hidden;
+  transition:transform .22s cubic-bezier(.4,0,.2,1), box-shadow .22s cubic-bezier(.4,0,.2,1);
+  display:flex;flex-direction:column;gap:0;
+}
+.cm-card:hover{
+  transform:translateY(-3px);
+  box-shadow:0 8px 32px rgba(15,22,35,0.12),0 2px 6px rgba(15,22,35,0.06);
+}
+.cm-card:hover .cm-expand-hint{opacity:1}
+.cm-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;height:3px;
+  background:#e3e6f0;border-radius:18px 18px 0 0;transition:background .25s;
+}
+.cm-card.ok::before{background:linear-gradient(90deg,#059669,#34d399)}
+.cm-card.warn::before{background:linear-gradient(90deg,#d97706,#fbbf24)}
+.cm-card.fail::before{background:linear-gradient(90deg,#dc2626,#f87171)}
+.cm-card.gold::before{background:linear-gradient(90deg,#b7860e,#d4af37)}
+
+/* Status dot */
+.cm-status-dot{
+  width:8px;height:8px;border-radius:50%;flex-shrink:0;
+  background:#d0d5e8;
+}
+.cm-card.ok .cm-status-dot{background:#34d399;box-shadow:0 0 0 3px rgba(52,211,153,.2)}
+.cm-card.warn .cm-status-dot{background:#fbbf24;box-shadow:0 0 0 3px rgba(251,191,36,.2)}
+.cm-card.fail .cm-status-dot{background:#f87171;box-shadow:0 0 0 3px rgba(248,113,113,.2)}
+.cm-card.gold .cm-status-dot{background:#d4af37;box-shadow:0 0 0 3px rgba(212,175,55,.2)}
+
+/* Card header */
+.cm-card-hd{
+  display:flex;align-items:center;gap:8px;
+  margin-bottom:12px;
+}
+.cm-card-pn{font-size:11px;font-weight:700;color:#5a6280;letter-spacing:.3px;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cm-card-badge{
+  font-size:9.5px;font-weight:700;padding:2px 8px;border-radius:20px;
+  white-space:nowrap;flex-shrink:0;
+}
+.cm-card.ok .cm-card-badge{background:#d1fae5;color:#059669}
+.cm-card.warn .cm-card-badge{background:#fef3c7;color:#d97706}
+.cm-card.fail .cm-card-badge{background:#fee2e2;color:#dc2626}
+.cm-card.gold .cm-card-badge{background:#fef9c3;color:#92400e}
+
+/* Part name */
+.cm-card-name{font-size:13.5px;font-weight:700;color:#0f1623;margin-bottom:2px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.cm-card-char{font-size:10.5px;color:#9099b8;margin-bottom:16px;
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+
+/* Big KPI number */
+.cm-kpi-row{display:flex;align-items:flex-end;justify-content:space-between;gap:8px;margin-bottom:12px}
+.cm-kpi-main{display:flex;flex-direction:column;gap:2px}
+.cm-kpi-label{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:1px;color:#9099b8}
+.cm-kpi-value{
+  font-size:40px;font-weight:800;letter-spacing:-2px;line-height:1;
+  font-variant-numeric:tabular-nums;
+  color:#0f1623;transition:color .25s;
+}
+.cm-card.ok .cm-kpi-value{color:#059669}
+.cm-card.warn .cm-kpi-value{color:#d97706}
+.cm-card.fail .cm-kpi-value{color:#dc2626}
+.cm-card.gold .cm-kpi-value{color:#b7860e}
+
+/* Mini stats beside big number */
+.cm-mini-stats{display:flex;flex-direction:column;gap:5px;align-items:flex-end}
+.cm-mini-item{text-align:right}
+.cm-mini-val{font-size:14px;font-weight:700;font-family:'Geist Mono','JetBrains Mono',monospace;color:#2d3655}
+.cm-mini-lbl{font-size:9px;color:#9099b8;text-transform:uppercase;letter-spacing:.5px}
+
+/* Sparkline canvas */
+.cm-sparkline-wrap{position:relative;height:44px;margin-bottom:8px}
+.cm-sparkline-wrap canvas{width:100%!important;height:44px!important}
+
+/* Footer meta */
+.cm-card-footer{
+  display:flex;justify-content:space-between;align-items:center;
+  padding-top:10px;border-top:1px solid #f0f2f8;
+  font-size:10px;color:#b0b8d0;
+}
+.cm-card-footer strong{color:#5a6280;font-weight:600}
+
+/* Hover hint */
+.cm-expand-hint{
+  position:absolute;bottom:12px;right:14px;
+  font-size:9px;font-weight:700;letter-spacing:.8px;text-transform:uppercase;
+  color:#9099b8;opacity:0;transition:opacity .2s;
+  display:flex;align-items:center;gap:4px;
+}
+.cm-expand-hint::after{content:"↗";font-size:10px}
+
+/* ── FULLSCREEN MODAL ── */
+.cm-modal-bg{
+  position:fixed;inset:0;z-index:2000;
+  background:rgba(10,15,28,0);
+  display:flex;align-items:stretch;justify-content:center;
+  pointer-events:none;
+  transition:background .3s cubic-bezier(.4,0,.2,1);
+}
+.cm-modal-bg.open{
+  background:rgba(10,15,28,0.55);
+  pointer-events:auto;
+  backdrop-filter:blur(4px);
+  -webkit-backdrop-filter:blur(4px);
+}
+.cm-modal{
+  background:#fff;
+  width:min(960px,96vw);
+  max-height:94vh;
+  border-radius:22px;
+  margin:auto;
+  overflow:hidden;
+  display:flex;flex-direction:column;
+  box-shadow:0 40px 100px rgba(10,15,28,0.22),0 8px 30px rgba(10,15,28,0.14);
+  transform:scale(0.92) translateY(20px);
+  opacity:0;
+  transition:transform .32s cubic-bezier(.34,1.56,.64,1), opacity .25s cubic-bezier(.4,0,.2,1);
+}
+.cm-modal-bg.open .cm-modal{
+  transform:scale(1) translateY(0);
+  opacity:1;
+}
+
+/* Modal header */
+.cm-modal-hd{
+  display:flex;align-items:center;gap:16px;
+  padding:22px 28px 18px;
+  border-bottom:1px solid #f0f2f8;
+  flex-shrink:0;
+}
+.cm-modal-status{
+  width:12px;height:12px;border-radius:50%;flex-shrink:0;background:#d0d5e8;
+}
+.cm-modal-status.ok{background:#34d399;box-shadow:0 0 0 4px rgba(52,211,153,.2)}
+.cm-modal-status.warn{background:#fbbf24;box-shadow:0 0 0 4px rgba(251,191,36,.2)}
+.cm-modal-status.fail{background:#f87171;box-shadow:0 0 0 4px rgba(248,113,113,.2)}
+.cm-modal-status.gold{background:#d4af37;box-shadow:0 0 0 4px rgba(212,175,55,.2)}
+.cm-modal-title-area{flex:1}
+.cm-modal-name{font-size:18px;font-weight:800;color:#0f1623;letter-spacing:-.4px}
+.cm-modal-sub{font-size:11.5px;color:#9099b8;margin-top:2px}
+.cm-modal-badge{
+  font-size:12px;font-weight:700;padding:5px 14px;border-radius:20px;flex-shrink:0;
+}
+.ok .cm-modal-badge,.cm-modal-badge.ok{background:#d1fae5;color:#059669}
+.warn .cm-modal-badge,.cm-modal-badge.warn{background:#fef3c7;color:#d97706}
+.fail .cm-modal-badge,.cm-modal-badge.fail{background:#fee2e2;color:#dc2626}
+.gold .cm-modal-badge,.cm-modal-badge.gold{background:#fef9c3;color:#92400e}
+.cm-modal-close{
+  width:36px;height:36px;border-radius:10px;border:1px solid #e3e6f0;
+  background:transparent;cursor:pointer;display:flex;align-items:center;justify-content:center;
+  font-size:18px;color:#9099b8;transition:all .15s;flex-shrink:0;
+}
+.cm-modal-close:hover{background:#fee2e2;color:#dc2626;border-color:#fca5a5}
+
+/* Modal KPI strip */
+.cm-modal-kpis{
+  display:grid;grid-template-columns:repeat(6,1fr);
+  gap:0;padding:18px 28px;background:#fafbff;
+  border-bottom:1px solid #f0f2f8;flex-shrink:0;
+}
+@media(max-width:700px){.cm-modal-kpis{grid-template-columns:repeat(3,1fr)}}
+.cm-modal-kpi{
+  display:flex;flex-direction:column;gap:3px;padding:0 10px;
+  border-right:1px solid #eef0f7;
+}
+.cm-modal-kpi:first-child{padding-left:0}
+.cm-modal-kpi:last-child{border-right:none}
+.cm-modal-kpi-lbl{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.8px;color:#9099b8}
+.cm-modal-kpi-val{
+  font-size:22px;font-weight:800;letter-spacing:-1px;
+  font-variant-numeric:tabular-nums;color:#0f1623;
+}
+.cm-modal-kpi-val.ok{color:#059669}
+.cm-modal-kpi-val.warn{color:#d97706}
+.cm-modal-kpi-val.fail{color:#dc2626}
+.cm-modal-kpi-val.gold{color:#b7860e}
+.cm-modal-kpi-sub{font-size:9.5px;color:#b0b8d0}
+
+/* Modal body / chart area */
+.cm-modal-body{
+  flex:1;overflow-y:auto;
+  padding:22px 28px;
+  display:flex;flex-direction:column;gap:18px;
+}
+.cm-modal-chart-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:14px;
+}
+@media(max-width:700px){.cm-modal-chart-grid{grid-template-columns:1fr}}
+
+.cm-modal-chart-card{
+  background:#fff;border:1px solid #eef0f7;border-radius:14px;padding:14px 16px;
+}
+.cm-modal-chart-title{
+  font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.7px;
+  color:#5a6280;margin-bottom:10px;
+}
+.cm-modal-chart-area{position:relative;height:160px}
+.cm-modal-chart-area canvas{width:100%!important;height:160px!important}
+.cm-modal-chart-full{grid-column:1/-1}
+
+/* Modal meta grid */
+.cm-modal-meta{
+  display:grid;grid-template-columns:repeat(4,1fr);gap:10px;
+  padding:16px;background:#fafbff;border-radius:12px;border:1px solid #eef0f7;
+}
+@media(max-width:600px){.cm-modal-meta{grid-template-columns:repeat(2,1fr)}}
+.cm-modal-meta-item{}
+.cm-modal-meta-lbl{font-size:9.5px;font-weight:600;color:#b0b8d0;text-transform:uppercase;letter-spacing:.6px;margin-bottom:3px}
+.cm-modal-meta-val{font-size:12.5px;font-weight:600;color:#2d3655;font-family:'Geist Mono',monospace}
+
+/* Modal actions */
+.cm-modal-foot{
+  display:flex;align-items:center;justify-content:flex-end;gap:8px;
+  padding:14px 28px;border-top:1px solid #f0f2f8;flex-shrink:0;
+}
+
+/* ── Studies Clean view toggle (applied in studies page too) ── */
+.cm-studies-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(280px,1fr));
+  gap:14px;
+  padding:18px 22px;
+}
 </style>
+
 </head>
 <body>
 <div class="app">
@@ -1221,11 +1458,7 @@ body{
       <div class="dec-display" id="decDisplay">4</div>
       <button class="dec-btn" onclick="changeDec(+1)">+</button>
     </div>
-    <button class="btn btn-ghost btn-sm" onclick="generateSim()">
-      <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor"><path d="M6.5 1a5.5 5.5 0 100 11A5.5 5.5 0 006.5 1zm0 1a4.5 4.5 0 110 9 4.5 4.5 0 010-9zm.5 2H6v3.5l2.5 1.5.5-.87-2-.5V4z"/></svg>
-      Simulação
-    </button>
-    <button class="btn btn-ghost btn-sm" onclick="resetAll()">
+<button class="btn btn-ghost btn-sm" onclick="resetAll()">
       <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor"><path d="M1.5 6.5A5 5 0 009.9 3H8.5V1.5H12V5h-1.5V3.6A6.5 6.5 0 102 9H3.6a5 5 0 01-2.1-2.5z"/></svg>
       Resetar
     </button>
@@ -1258,6 +1491,16 @@ body{
         <p style="font-size:11.5px;color:var(--t2);margin:4px 0 0">Visão consolidada de todos os estudos · <span id="dashSyncState" style="font-family:var(--mono);color:var(--t3)">offline</span></p>
       </div>
       <div style="display:flex;gap:8px;align-items:center">
+        <div class="dash-view-toggle" id="dashViewToggle">
+          <button class="dvt-btn active" id="dvtClassic" onclick="setDashView('classic',this)">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="currentColor"><rect x="1" y="1" width="5" height="5" rx="1"/><rect x="8" y="1" width="5" height="5" rx="1"/><rect x="1" y="8" width="5" height="5" rx="1"/><rect x="8" y="8" width="5" height="5" rx="1"/></svg>
+            Clássico
+          </button>
+          <button class="dvt-btn" id="dvtClean" onclick="setDashView('clean',this)">
+            <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="1" y="1" width="12" height="3.5" rx="1"/><rect x="1" y="6.5" width="7" height="3.5" rx="1"/><rect x="10" y="6.5" width="3" height="3.5" rx="1"/></svg>
+            Clean
+          </button>
+        </div>
         <button class="btn btn-ghost btn-sm" onclick="renderDashboard()">↻ Atualizar</button>
         <button class="btn btn-ok btn-sm" onclick="forceFBSync()" title="Forçar sincronização com Firebase">⬆ Sincronizar</button>
       </div>
@@ -1265,7 +1508,14 @@ body{
 
     <div class="kpi-grid" id="kpiGrid"></div>
 
-    <div class="dash-charts">
+    <!-- CLEAN MINIMAL VIEW -->
+    <div id="cmDashView" style="display:none">
+      <div class="cm-grid" id="cmStudiesGrid"></div>
+    </div>
+
+    <!-- CLASSIC VIEW wrapper -->
+    <div id="classicDashView">
+      <div class="dash-charts">
       <div class="dash-card premium">
         <div class="dash-card-title">Cpk dos últimos 15 estudos</div>
         <div style="position:relative;height:300px"><canvas id="dashBar"></canvas></div>
@@ -1301,6 +1551,7 @@ body{
         <table class="dash-tbl" id="dashTable"></table>
       </div>
     </div>
+    </div><!-- #classicDashView -->
   </div>
 </div>
 
@@ -1502,123 +1753,149 @@ body{
         </div>
       </div>
 
-      <!-- Simulacao -->
+      <!-- Simulacao — layout renovado -->
       <div class="itab-pane" id="itp-sim">
 
-        <!-- Instrucao -->
-        <div style="background:var(--blue-l);border:1px solid var(--blue-m);border-radius:var(--r);padding:8px 10px;margin-bottom:10px;font-size:10.5px;color:var(--blue);font-weight:700;line-height:1.7">
-          Informe o <b>nominal</b>, a <b>tolerancia</b>, os <b>valores encontrados</b> (min/max reais) e a quantidade.<br>
-          Os dados gerados ficam na faixa real encontrada, dentro de LSL/USL, com Cp e Cpk aprovados.
-        </div>
-
-        <!-- BLOCO 1: Especificacao -->
-        <div style="font-size:9.5px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px">1. Especificacao</div>
-
-        <div class="row2" style="margin-bottom:8px">
-          <div class="field">
-            <div class="lbl lbl-req">Nominal</div>
-            <input type="number" id="simRefVal" step="any" placeholder="Ex: 0" oninput="simPreview()"/>
-          </div>
-          <div class="field">
-            <div class="lbl">Modo</div>
-            <select id="simTolMode" onchange="simToggleTolMode();simPreview()" style="height:32px;font-size:11px">
-              <option value="bilateral">+/- Bilateral (simétrica)</option>
-              <option value="asymmetric">+a / -b Assimétrica</option>
-              <option value="amplitude">Amplitude IT</option>
-              <option value="manual">LSL / USL manual</option>
-              <option value="usl_only">So USL</option>
-              <option value="lsl_only">So LSL</option>
-            </select>
-          </div>
-        </div>
-
-        <!-- sub-paineis tolerancia -->
-        <div id="simPanBilateral" style="margin-bottom:8px">
-          <div class="field">
-            <div class="lbl lbl-req">Variacao (+/-)</div>
-            <input type="number" id="simTol" step="any" placeholder="Ex: 0.3" oninput="simPreview()"/>
-          </div>
-        </div>
-        <div id="simPanAsym" style="display:none;margin-bottom:8px">
-          <div class="row2">
-            <div class="field">
-              <div class="lbl lbl-req">Tolerância superior (+)</div>
-              <input type="number" id="simTolUp" step="any" placeholder="Ex: 0.15" oninput="simPreview()"/>
-            </div>
-            <div class="field">
-              <div class="lbl lbl-req">Tolerância inferior (-)</div>
-              <input type="number" id="simTolDown" step="any" placeholder="Ex: 0.05" oninput="simPreview()"/>
+        <!-- Hero banner -->
+        <div style="
+          background:linear-gradient(135deg,#1a56db 0%,#1e40af 100%);
+          border-radius:10px;padding:12px 14px;margin-bottom:12px;
+          display:flex;align-items:center;gap:10px;
+        ">
+          <div style="font-size:22px;flex-shrink:0">⚡</div>
+          <div>
+            <div style="font-size:12px;font-weight:800;color:#fff;letter-spacing:-.2px">Gerador de Dados Capazes</div>
+            <div style="font-size:10px;color:rgba(255,255,255,0.78);margin-top:2px;line-height:1.5">
+              Informe nominal, tolerância e faixa real → dados industriais realistas com Cpk garantido
             </div>
           </div>
-          <div style="font-size:9.5px;color:var(--t2);margin-top:4px;line-height:1.4">
-            Ex: 25.03 +0.15/-0.05 → LSL=24.98, USL=25.18. Informe os dois valores como positivos.
+        </div>
+
+        <!-- PASSO 1 -->
+        <div class="sim-step">
+          <div class="sim-step-hd">
+            <div class="sim-step-num">1</div>
+            <div class="sim-step-title">Especificação</div>
+          </div>
+          <div class="row2" style="margin-bottom:8px">
+            <div class="field">
+              <div class="lbl lbl-req">Nominal / Referência</div>
+              <input type="number" id="simRefVal" step="any" placeholder="Ex: 25.000" oninput="simPreview()"/>
+            </div>
+            <div class="field">
+              <div class="lbl">Tipo de tolerância</div>
+              <select id="simTolMode" onchange="simToggleTolMode();simPreview()">
+                <option value="bilateral">± Bilateral</option>
+                <option value="asymmetric">+a / -b Assimétrica</option>
+                <option value="amplitude">Amplitude IT</option>
+                <option value="manual">LSL / USL direto</option>
+                <option value="usl_only">Somente USL</option>
+                <option value="lsl_only">Somente LSL</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- sub-paineis -->
+          <div id="simPanBilateral">
+            <div class="field">
+              <div class="lbl lbl-req">Variação (±)</div>
+              <input type="number" id="simTol" step="any" placeholder="Ex: 0.30" oninput="simPreview()"/>
+            </div>
+          </div>
+          <div id="simPanAsym" style="display:none">
+            <div class="row2">
+              <div class="field">
+                <div class="lbl lbl-req">Superior (+)</div>
+                <input type="number" id="simTolUp" step="any" placeholder="Ex: 0.15" oninput="simPreview()"/>
+              </div>
+              <div class="field">
+                <div class="lbl lbl-req">Inferior (-)</div>
+                <input type="number" id="simTolDown" step="any" placeholder="Ex: 0.05" oninput="simPreview()"/>
+              </div>
+            </div>
+            <div style="font-size:9.5px;color:var(--t2);margin-top:4px">Ex: 25.03 +0.15/-0.05 → informe como positivos</div>
+          </div>
+          <div id="simPanAmplitude" style="display:none">
+            <div class="field">
+              <div class="lbl lbl-req">Amplitude total (IT)</div>
+              <input type="number" id="simIT" step="any" placeholder="Ex: 0.6" oninput="simPreview()"/>
+            </div>
+          </div>
+          <div id="simPanManual" style="display:none">
+            <div class="row2">
+              <div class="field"><div class="lbl">LSL</div><input type="number" id="simLSL" step="any" placeholder="Ex: -0.30" oninput="simPreview()"/></div>
+              <div class="field"><div class="lbl">USL</div><input type="number" id="simUSL" step="any" placeholder="Ex: 0.30" oninput="simPreview()"/></div>
+            </div>
+          </div>
+          <div id="simPanUSL" style="display:none">
+            <div class="field"><div class="lbl lbl-req">USL</div><input type="number" id="simUSLonly" step="any" placeholder="Ex: 100" oninput="simPreview()"/></div>
+          </div>
+          <div id="simPanLSL" style="display:none">
+            <div class="field"><div class="lbl lbl-req">LSL</div><input type="number" id="simLSLonly" step="any" placeholder="Ex: 850" oninput="simPreview()"/></div>
           </div>
         </div>
-        <div id="simPanAmplitude" style="display:none;margin-bottom:8px">
-          <div class="field">
-            <div class="lbl lbl-req">Amplitude total (IT)</div>
-            <input type="number" id="simIT" step="any" placeholder="Ex: 0.6" oninput="simPreview()"/>
+
+        <!-- PASSO 2 -->
+        <div class="sim-step">
+          <div class="sim-step-hd">
+            <div class="sim-step-num">2</div>
+            <div class="sim-step-title">Faixa Real Medida</div>
           </div>
-        </div>
-        <div id="simPanManual" style="display:none;margin-bottom:8px">
+          <div style="background:var(--ok-l);border:1px solid var(--ok-b);border-radius:var(--r);padding:7px 10px;margin-bottom:8px;font-size:10px;color:var(--ok);font-weight:600">
+            📏 Informe o menor e maior valor real do processo. Os dados simulados ficarão nessa faixa.
+          </div>
           <div class="row2">
-            <div class="field"><div class="lbl">LSL</div><input type="number" id="simLSL" step="any" placeholder="Ex: -0.3" oninput="simPreview()"/></div>
-            <div class="field"><div class="lbl">USL</div><input type="number" id="simUSL" step="any" placeholder="Ex: 0.3" oninput="simPreview()"/></div>
-          </div>
-        </div>
-        <div id="simPanUSL" style="display:none;margin-bottom:8px">
-          <div class="field"><div class="lbl lbl-req">USL</div><input type="number" id="simUSLonly" step="any" placeholder="Ex: 100" oninput="simPreview()"/></div>
-        </div>
-        <div id="simPanLSL" style="display:none;margin-bottom:8px">
-          <div class="field"><div class="lbl lbl-req">LSL</div><input type="number" id="simLSLonly" step="any" placeholder="Ex: 850" oninput="simPreview()"/></div>
-        </div>
-
-        <div style="border-top:1px dashed var(--s4);margin:10px 0 10px"></div>
-
-        <!-- BLOCO 2: Valores encontrados -->
-        <div style="font-size:9.5px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px">2. Faixa Real Encontrada</div>
-        <div style="font-size:10px;color:var(--t2);margin-bottom:7px;line-height:1.5">Informe o menor e maior valor medido na peca/processo. Os dados simulados ficarao nessa faixa.</div>
-
-        <div class="row2" style="margin-bottom:8px">
-          <div class="field">
-            <div class="lbl lbl-req">Menor valor (min)</div>
-            <input type="number" id="simFoundMin" step="any" placeholder="Ex: -0.18" oninput="simPreview()"/>
-          </div>
-          <div class="field">
-            <div class="lbl lbl-req">Maior valor (max)</div>
-            <input type="number" id="simFoundMax" step="any" placeholder="Ex: -0.15" oninput="simPreview()"/>
+            <div class="field">
+              <div class="lbl lbl-req">Valor mínimo encontrado</div>
+              <input type="number" id="simFoundMin" step="any" placeholder="Ex: -0.18" oninput="simPreview()"/>
+            </div>
+            <div class="field">
+              <div class="lbl lbl-req">Valor máximo encontrado</div>
+              <input type="number" id="simFoundMax" step="any" placeholder="Ex: -0.15" oninput="simPreview()"/>
+            </div>
           </div>
         </div>
 
-        <div style="border-top:1px dashed var(--s4);margin:10px 0 10px"></div>
-
-        <!-- BLOCO 3: Quantidade e indice -->
-        <div style="font-size:9.5px;font-weight:700;color:var(--t2);text-transform:uppercase;letter-spacing:.6px;margin-bottom:5px">3. Geracao</div>
-        <div class="row2" style="margin-bottom:8px">
-          <div class="field">
-            <div class="lbl lbl-req">Qtd. amostras (N)</div>
-            <input type="number" id="simN" step="1" min="5" max="2000" value="50" oninput="simPreview()"/>
+        <!-- PASSO 3 -->
+        <div class="sim-step">
+          <div class="sim-step-hd">
+            <div class="sim-step-num">3</div>
+            <div class="sim-step-title">Configuração da Geração</div>
           </div>
-          <div class="field">
-            <div class="lbl">Cpk alvo minimo</div>
-            <select id="simCpkTarget" onchange="simPreview()" style="height:32px;font-size:11px">
-              <option value="1.33">1.33 Aceitavel</option>
-              <option value="1.67" selected>1.67 Excelente</option>
-              <option value="2.00">2.00 Classe Mundial</option>
-            </select>
+          <div class="row2">
+            <div class="field">
+              <div class="lbl lbl-req">Qtd. amostras (N)</div>
+              <input type="number" id="simN" step="1" min="5" max="2000" value="50" oninput="simPreview()"/>
+            </div>
+            <div class="field">
+              <div class="lbl">Cpk alvo mínimo</div>
+              <select id="simCpkTarget" onchange="simPreview()">
+                <option value="1.33">1.33 — Aceitável</option>
+                <option value="1.67" selected>1.67 — Excelente ★</option>
+                <option value="2.00">2.00 — Classe Mundial</option>
+              </select>
+            </div>
           </div>
         </div>
 
-        <!-- Preview calculado -->
-        <div id="simCalcPreview" style="display:none;background:var(--s2);border:1px solid var(--s3);border-radius:var(--r);padding:7px 10px;margin-bottom:8px;font-size:10px;font-family:var(--mono);color:var(--t1);line-height:1.9;flex-wrap:wrap"></div>
+        <!-- Preview live -->
+        <div id="simCalcPreview" style="display:none;background:var(--s2);border:1px solid var(--s3);border-left:3px solid var(--blue);border-radius:var(--r);padding:8px 12px;margin-bottom:10px;font-size:10.5px;font-family:var(--mono);color:var(--t1);line-height:2;flex-wrap:wrap"></div>
 
-        <!-- Botao gerar -->
-        <button class="btn btn-primary" style="width:100%;justify-content:center;font-size:12px;padding:9px" onclick="runSim()">
-          &#9889; Gerar Amostras Capazes
+        <!-- Botão principal -->
+        <button onclick="runSim()" style="
+          width:100%;border:none;border-radius:10px;padding:13px;
+          background:linear-gradient(135deg,#1a56db,#1e40af);
+          color:#fff;font-size:13px;font-weight:700;cursor:pointer;
+          display:flex;align-items:center;justify-content:center;gap:8px;
+          box-shadow:0 6px 20px rgba(26,86,219,0.35);
+          transition:all .18s ease;letter-spacing:-.2px;
+        " onmouseover="this.style.transform='translateY(-1px)';this.style.boxShadow='0 8px 24px rgba(26,86,219,0.45)'"
+           onmouseout="this.style.transform='';this.style.boxShadow='0 6px 20px rgba(26,86,219,0.35)'">
+          <span style="font-size:16px">⚡</span> Gerar Amostras Capazes
         </button>
 
-        <!-- Feedback -->
-        <div id="simFeedback" style="display:none;margin-top:8px;padding:8px 10px;border-radius:var(--r);font-size:10.5px;font-weight:600;line-height:1.8"></div>
+        <!-- Feedback resultado -->
+        <div id="simFeedback" style="display:none;margin-top:10px;padding:10px 12px;border-radius:var(--r);font-size:10.5px;font-weight:600;line-height:1.9"></div>
       </div>
 
       <!-- Data summary -->
@@ -1626,17 +1903,32 @@ body{
         <div class="data-bar">
           <div class="data-cnt">
             <span class="data-cnt-n" id="dCount">0</span>
-            <span class="data-cnt-lbl">amostras carregadas</span>
+            <span class="data-cnt-lbl">amostras</span>
           </div>
-          <div style="display:flex;gap:6px">
+          <div style="display:flex;gap:5px;align-items:center">
+            <button class="btn btn-ghost btn-xs" onclick="copyAllData()" title="Copiar todos os valores">⎘ Copiar</button>
             <button class="btn btn-ghost btn-xs" onclick="undoLast()" title="Desfazer último">↩</button>
             <button class="btn btn-danger btn-xs" onclick="clearData()">✕ Limpar</button>
           </div>
         </div>
-        <div class="chips-scroll">
-          <div class="chips" id="dChips"></div>
+
+        <!-- Data table -->
+        <div id="dataTableWrap" style="margin-top:6px;max-height:220px;overflow-y:auto;border:1px solid var(--s3);border-radius:var(--r2);background:var(--s0)">
+          <table style="width:100%;border-collapse:collapse;font-size:11px" id="dataTable">
+            <thead style="position:sticky;top:0;z-index:1">
+              <tr style="background:var(--s1);border-bottom:1px solid var(--s3)">
+                <th style="padding:5px 8px;text-align:center;width:36px;font-size:9.5px;color:var(--t3);font-weight:700;letter-spacing:.5px;text-transform:uppercase">#</th>
+                <th style="padding:5px 8px;text-align:right;font-size:9.5px;color:var(--t3);font-weight:700;letter-spacing:.5px;text-transform:uppercase">Valor</th>
+                <th style="padding:5px 8px;text-align:center;width:60px;font-size:9.5px;color:var(--t3);font-weight:700;letter-spacing:.5px;text-transform:uppercase">Ações</th>
+              </tr>
+            </thead>
+            <tbody id="dTableBody">
+              <tr><td colspan="3" style="text-align:center;padding:18px;color:var(--t3);font-style:italic;font-size:11px">Nenhum dado inserido</td></tr>
+            </tbody>
+          </table>
         </div>
-        <div class="oos-alert" id="oosAlert" style="display:none"></div>
+
+        <div class="oos-alert" id="oosAlert" style="display:none;margin-top:6px"></div>
       </div>
     </div>
 
@@ -1956,6 +2248,46 @@ body{
 </div>
 
 </div><!-- .app -->
+
+<!-- ══════════════════════════════════════════════════════
+     CLEAN MINIMAL — FULLSCREEN MODAL
+══════════════════════════════════════════════════════ -->
+<div class="cm-modal-bg" id="cmModal" onclick="cmCloseIfBg(event)">
+  <div class="cm-modal" id="cmModalInner">
+    <div class="cm-modal-hd">
+      <div class="cm-modal-status" id="cmMStatus"></div>
+      <div class="cm-modal-title-area">
+        <div class="cm-modal-name" id="cmMName">—</div>
+        <div class="cm-modal-sub" id="cmMSub">—</div>
+      </div>
+      <div class="cm-modal-badge" id="cmMBadge">—</div>
+      <button class="cm-modal-close" onclick="cmClose()">✕</button>
+    </div>
+    <div class="cm-modal-kpis" id="cmMKpis"></div>
+    <div class="cm-modal-body">
+      <div class="cm-modal-chart-grid">
+        <div class="cm-modal-chart-card cm-modal-chart-full">
+          <div class="cm-modal-chart-title">Tendência Cpk — Janela deslizante</div>
+          <div class="cm-modal-chart-area" style="height:200px"><canvas id="cmCpkTrend" style="height:200px!important"></canvas></div>
+        </div>
+        <div class="cm-modal-chart-card">
+          <div class="cm-modal-chart-title">Histograma + Curva Normal</div>
+          <div class="cm-modal-chart-area"><canvas id="cmHist"></canvas></div>
+        </div>
+        <div class="cm-modal-chart-card">
+          <div class="cm-modal-chart-title">Gráfico I — Valores Individuais</div>
+          <div class="cm-modal-chart-area"><canvas id="cmIC"></canvas></div>
+        </div>
+      </div>
+      <div class="cm-modal-meta" id="cmMMeta"></div>
+    </div>
+    <div class="cm-modal-foot">
+      <button class="btn btn-ghost btn-sm" onclick="cmClose()">Fechar</button>
+      <button class="btn btn-ghost btn-sm" id="cmMEditBtn">✏ Editar</button>
+      <button class="btn btn-primary btn-sm" id="cmMPDFBtn">📄 Exportar PDF</button>
+    </div>
+  </div>
+</div>
 <div class="toast" id="toast"></div>
 
 <!-- ══════════════════════════════════════════════════════
@@ -1970,8 +2302,7 @@ const S = { data:[], lsl:null, usl:null, target:null, specType:'bilateral' };
 const CH = { hist:null, ic:null, mr:null, box:null, qq:null, cpktrend:null };
 let lastStats = null;
 let currentStudyId = null;
-// STUDIES começa vazio — Firebase é a fonte única da verdade.
-// localStorage é apenas backup temporário, nunca fonte primária.
+// STUDIES vazio — Firebase é a fonte única. localStorage = backup temporário.
 let STUDIES = [];
 
 /* ═══════════════════════════════════════════════
@@ -2161,7 +2492,328 @@ function renderDashboardExtras(all){
     }
   });
 }
+/* ═══════════════════════════════════════════════
+   CLEAN MINIMAL — VIEW TOGGLE & SPARKLINES
+═══════════════════════════════════════════════ */
+let _dashView = 'classic'; // 'classic' | 'clean'
+const CM_SPARKS = {}; // sparkline Chart instances per study id
+
+function setDashView(mode, btn){
+  _dashView = mode;
+  document.querySelectorAll('.dvt-btn').forEach(b=>b.classList.remove('active'));
+  if(btn) btn.classList.add('active');
+  const cmDiv = document.getElementById('cmDashView');
+  const clDiv = document.getElementById('classicDashView');
+  const kpiGrid = document.getElementById('kpiGrid');
+  if(mode === 'clean'){
+    cmDiv.style.display = 'block';
+    clDiv.style.display = 'none';
+    kpiGrid.style.display = 'none';
+    renderCMDash();
+  } else {
+    cmDiv.style.display = 'none';
+    clDiv.style.display = '';
+    kpiGrid.style.display = '';
+    renderDashboard();
+  }
+}
+
+function cmStudyClass(cpk){
+  if(cpk==null||isNaN(cpk)) return {k:'',label:'Sem dados',color:'#9099b8'};
+  if(cpk>=1.67) return {k:'gold',label:'Classe Mundial',color:'#b7860e'};
+  if(cpk>=1.33) return {k:'ok',label:'Aprovado',color:'#059669'};
+  if(cpk>=1.00) return {k:'warn',label:'Monitor',color:'#d97706'};
+  return {k:'fail',label:'Reprovado',color:'#dc2626'};
+}
+
+/* Build mini sparkline data: rolling Cpk trend */
+function buildSparkData(study){
+  if(!study.data||study.data.length<10) return null;
+  const arr = study.data;
+  const win = Math.min(20, Math.max(5, Math.floor(arr.length/5)));
+  const vals = [];
+  for(let i=win; i<=arr.length; i+=Math.max(1, Math.floor(arr.length/20))){
+    const slice = arr.slice(i-win, i);
+    const xb = slice.reduce((a,b)=>a+b,0)/slice.length;
+    const MRs=[]; for(let j=1;j<slice.length;j++) MRs.push(Math.abs(slice[j]-slice[j-1]));
+    const MRbar=MRs.reduce((a,b)=>a+b,0)/MRs.length;
+    const sw=MRbar/1.128;
+    if(sw<=0) continue;
+    let cpk=null;
+    const lsl=study.lsl, usl=study.usl, st=study.specType||'bilateral';
+    if(st==='bilateral'&&lsl!=null&&usl!=null) cpk=Math.min((usl-xb)/(3*sw),(xb-lsl)/(3*sw));
+    else if(usl!=null) cpk=(usl-xb)/(3*sw);
+    else if(lsl!=null) cpk=(xb-lsl)/(3*sw);
+    if(cpk!=null) vals.push(cpk);
+  }
+  return vals.length>=3 ? vals : null;
+}
+
+function renderCMDash(){
+  const grid = document.getElementById('cmStudiesGrid');
+  if(!grid) return;
+  const studies = STUDIES.slice().sort((a,b)=>new Date(b.savedAt)-new Date(a.savedAt));
+  if(!studies.length){
+    grid.innerHTML=`<div style="grid-column:1/-1;text-align:center;padding:60px 20px;color:#9099b8">
+      <svg width="56" height="56" viewBox="0 0 56 56" fill="none" style="margin:0 auto 12px;display:block"><rect x="8" y="6" width="40" height="44" rx="4" stroke="#d0d5e8" stroke-width="2"/><line x1="16" y1="20" x2="40" y2="20" stroke="#d0d5e8" stroke-width="2"/><line x1="16" y1="28" x2="40" y2="28" stroke="#d0d5e8" stroke-width="2"/><line x1="16" y1="36" x2="28" y2="36" stroke="#d0d5e8" stroke-width="2"/></svg>
+      <div style="font-size:15px;font-weight:700;color:#5a6280">Nenhum estudo salvo ainda</div>
+      <div style="font-size:12px;margin-top:6px">Salve um estudo na aba Análise para vê-lo aqui.</div>
+    </div>`;
+    return;
+  }
+  grid.innerHTML = studies.map(s=>{
+    const st = s.stats||{};
+    const cls = cmStudyClass(st.Cpk);
+    const ppmStr = st.ppm!=null ? (st.ppm<1?'<1':st.ppm.toFixed(0)) : '—';
+    const savedDate = new Date(s.savedAt).toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'2-digit'});
+    return `<div class="cm-card ${cls.k}" onclick="cmOpenStudy('${s.id}')" data-id="${s.id}">
+      <div class="cm-card-hd">
+        <div class="cm-status-dot"></div>
+        <div class="cm-card-pn">${s.pn||'—'}</div>
+        <div class="cm-card-badge">${cls.label}</div>
+      </div>
+      <div class="cm-card-name" title="${s.pname||'Sem nome'}">${s.pname||'Sem nome'}</div>
+      <div class="cm-card-char" title="${s.cn||s.cc||'—'}">${s.cn||s.cc||'—'} ${s.unit?'· '+s.unit:''}</div>
+      <div class="cm-kpi-row">
+        <div class="cm-kpi-main">
+          <div class="cm-kpi-label">Cpk</div>
+          <div class="cm-kpi-value">${st.Cpk!=null?st.Cpk.toFixed(2):'—'}</div>
+        </div>
+        <div class="cm-mini-stats">
+          <div class="cm-mini-item">
+            <div class="cm-mini-val">${st.Cp!=null?st.Cp.toFixed(2):'—'}</div>
+            <div class="cm-mini-lbl">Cp</div>
+          </div>
+          <div class="cm-mini-item">
+            <div class="cm-mini-val">${ppmStr}</div>
+            <div class="cm-mini-lbl">PPM</div>
+          </div>
+        </div>
+      </div>
+      <div class="cm-sparkline-wrap">
+        <canvas id="spark-${s.id}" height="44"></canvas>
+      </div>
+      <div class="cm-card-footer">
+        <span>N=<strong>${st.n||'—'}</strong> &nbsp;·&nbsp; <strong>${savedDate}</strong></span>
+        <span>${s.owner||''}</span>
+      </div>
+      <div class="cm-expand-hint">Expandir</div>
+    </div>`;
+  }).join('');
+
+  // Render sparklines after DOM update
+  requestAnimationFrame(()=>{
+    studies.forEach(s=>{
+      const canvas = document.getElementById('spark-'+s.id);
+      if(!canvas) return;
+      const sparkData = buildSparkData(s);
+      if(!sparkData){ canvas.style.opacity='.3'; return; }
+      const st=s.stats||{};
+      const cls=cmStudyClass(st.Cpk);
+      const colorMap={'ok':'#059669','warn':'#d97706','fail':'#dc2626','gold':'#b7860e'};
+      const col = colorMap[cls.k]||'#1a56db';
+      if(CM_SPARKS[s.id]) { try{CM_SPARKS[s.id].destroy();}catch(e){} }
+      CM_SPARKS[s.id] = new Chart(canvas.getContext('2d'),{
+        type:'line',
+        data:{
+          labels:sparkData.map((_,i)=>i),
+          datasets:[{
+            data:sparkData,
+            borderColor:col,
+            backgroundColor:col+'22',
+            borderWidth:2,
+            pointRadius:0,
+            fill:true,
+            tension:0.4
+          }]
+        },
+        options:{
+          responsive:false,
+          animation:false,
+          plugins:{legend:{display:false},tooltip:{enabled:false}},
+          scales:{
+            x:{display:false},
+            y:{display:false, min:0, suggestedMax:Math.max(2, ...sparkData)+0.3}
+          }
+        },
+        plugins:[{
+          id:'refLines',
+          afterDraw(ch){
+            const {ctx:c, chartArea:{left,right}, scales:{y:ysc}} = ch;
+            [[1.33,'#d97706'],[1.67,'#059669']].forEach(([v,col])=>{
+              const py=ysc.getPixelForValue(v);
+              if(py<ch.chartArea.top||py>ch.chartArea.bottom) return;
+              c.save();c.strokeStyle=col;c.setLineDash([3,3]);c.lineWidth=1;
+              c.globalAlpha=0.6;
+              c.beginPath();c.moveTo(left,py);c.lineTo(right,py);c.stroke();
+              c.restore();
+            });
+          }
+        }]
+      });
+    });
+  });
+}
+
+/* ══ FULLSCREEN MODAL ══ */
+const CM_MODAL_CH = {trend:null, hist:null, ic:null};
+let _cmOpenStudyId = null;
+
+function cmOpenStudy(id){
+  const study = STUDIES.find(s=>s.id===id);
+  if(!study) return;
+  _cmOpenStudyId = id;
+  const st = study.stats||{};
+  const cls = cmStudyClass(st.Cpk);
+
+  // Status
+  const mStatus = document.getElementById('cmMStatus');
+  mStatus.className = 'cm-modal-status '+(cls.k||'');
+
+  // Title
+  document.getElementById('cmMName').textContent = study.pname||'Sem nome';
+  document.getElementById('cmMSub').textContent = [study.pn, study.cn, study.unit].filter(Boolean).join(' · ');
+
+  // Badge
+  const badge = document.getElementById('cmMBadge');
+  badge.textContent = cls.label;
+  badge.className = 'cm-modal-badge '+(cls.k||'');
+
+  // KPI strip
+  const cpkColor = {'ok':'ok','warn':'warn','fail':'fail','gold':'gold'}[cls.k]||'';
+  document.getElementById('cmMKpis').innerHTML = [
+    {l:'Cpk', v:st.Cpk!=null?st.Cpk.toFixed(3):'—', cls:cpkColor, sub:'Cap. Real'},
+    {l:'Cp',  v:st.Cp!=null?st.Cp.toFixed(3):'—',   cls:'',        sub:'Cap. Pot.'},
+    {l:'Pp',  v:st.Pp!=null?st.Pp.toFixed(3):'—',   cls:'',        sub:'Perf. Pot.'},
+    {l:'Ppk', v:st.Ppk!=null?st.Ppk.toFixed(3):'—', cls:'',        sub:'Perf. Real'},
+    {l:'PPM', v:st.ppm!=null?(st.ppm<1?'<1':st.ppm.toFixed(0)):'—', cls:st.ppm>1000?'fail':st.ppm>100?'warn':'ok', sub:'Estimado'},
+    {l:'N',   v:st.n||'—', cls:'', sub:'Amostras'},
+  ].map(k=>`<div class="cm-modal-kpi">
+    <div class="cm-modal-kpi-lbl">${k.l}</div>
+    <div class="cm-modal-kpi-val ${k.cls}">${k.v}</div>
+    <div class="cm-modal-kpi-sub">${k.sub}</div>
+  </div>`).join('');
+
+  // Meta
+  document.getElementById('cmMMeta').innerHTML = [
+    {l:'Part Number', v:study.pn||'—'},
+    {l:'Responsável', v:study.owner||'—'},
+    {l:'Data',        v:study.date||'—'},
+    {l:'Equipamento', v:study.equip||'—'},
+    {l:'LSL',         v:study.lsl!=null?study.lsl:'—'},
+    {l:'USL',         v:study.usl!=null?study.usl:'—'},
+    {l:'Target',      v:study.target!=null?study.target:'—'},
+    {l:'Fora Esp.',   v:st.oos!=null?st.oos:'—'},
+  ].map(m=>`<div class="cm-modal-meta-item">
+    <div class="cm-modal-meta-lbl">${m.l}</div>
+    <div class="cm-modal-meta-val">${m.v}</div>
+  </div>`).join('');
+
+  // Buttons
+  document.getElementById('cmMEditBtn').onclick = ()=>{ cmClose(); loadStudyToEditor(id); };
+  document.getElementById('cmMPDFBtn').onclick = ()=>exportStudyPDFById(id);
+
+  // Open modal
+  document.getElementById('cmModal').classList.add('open');
+  document.body.style.overflow = 'hidden';
+
+  // Render charts with study data
+  setTimeout(()=>_cmRenderModalCharts(study), 60);
+}
+
+function _cmRenderModalCharts(study){
+  if(!study.data||study.data.length<2) return;
+  const arr = study.data;
+  const st = study.stats||{};
+  // Cpk trend chart
+  const sparkData = buildSparkData(study);
+  if(sparkData&&sparkData.length>=3){
+    if(CM_MODAL_CH.trend){ try{CM_MODAL_CH.trend.destroy();}catch(e){} }
+    const cls = cmStudyClass(st.Cpk);
+    const col = {'ok':'#059669','warn':'#d97706','fail':'#dc2626','gold':'#b7860e'}[cls.k]||'#1a56db';
+    CM_MODAL_CH.trend = new Chart(document.getElementById('cmCpkTrend').getContext('2d'),{
+      type:'line',
+      data:{labels:sparkData.map((_,i)=>i+1),datasets:[{
+        label:'Cpk',data:sparkData,borderColor:col,borderWidth:2.5,
+        backgroundColor:col+'18',fill:true,tension:0.4,
+        pointRadius:3,pointBackgroundColor:'#fff',pointBorderColor:col,pointBorderWidth:2,
+        pointHoverRadius:6
+      }]},
+      options:{responsive:true,maintainAspectRatio:false,
+        plugins:{legend:{display:false},tooltip:{backgroundColor:'#0f1623',cornerRadius:8,padding:10}},
+        scales:{
+          x:{grid:{display:false},ticks:{font:{size:10}}},
+          y:{beginAtZero:true,suggestedMax:Math.max(2,...sparkData)+0.2,
+             grid:{color:'rgba(15,22,35,0.05)'},ticks:{font:{size:10}}}
+        }
+      },
+      plugins:[{id:'mRefs',afterDraw(ch){
+        const {ctx:c,chartArea:{left,right},scales:{y}} = ch;
+        [[1.33,'#d97706',],[1.67,'#059669']].forEach(([v,col])=>{
+          const py=y.getPixelForValue(v);
+          c.save();c.strokeStyle=col;c.setLineDash([5,4]);c.lineWidth=1.3;c.globalAlpha=.7;
+          c.beginPath();c.moveTo(left,py);c.lineTo(right,py);c.stroke();
+          c.fillStyle=col;c.font='bold 9px sans-serif';c.textAlign='right';c.globalAlpha=1;
+          c.fillText(v.toFixed(2),right-4,py-3);c.restore();
+        });
+      }}]
+    });
+  }
+
+  // Histogram (reuse renderHistogram logic, simplified)
+  if(CM_MODAL_CH.hist){ try{CM_MODAL_CH.hist.destroy();}catch(e){} }
+  const n=arr.length, nBins=Math.max(5,Math.min(20,Math.ceil(1+3.322*Math.log10(n))));
+  const mn=Math.min(...arr), mx=Math.max(...arr), bw=(mx-mn)/nBins||1;
+  const bins=Array(nBins).fill(0);
+  arr.forEach(v=>{ let b=Math.min(Math.floor((v-mn)/bw),nBins-1); bins[b]++; });
+  const labels=bins.map((_,i)=>(mn+i*bw+bw/2).toFixed(2));
+  const cls=cmStudyClass(st.Cpk);
+  const col2={'ok':'rgba(5,150,105,0.7)','warn':'rgba(217,119,6,0.7)','fail':'rgba(220,38,38,0.7)','gold':'rgba(183,134,14,0.7)'}[cls.k]||'rgba(26,86,219,0.7)';
+  CM_MODAL_CH.hist = new Chart(document.getElementById('cmHist').getContext('2d'),{
+    type:'bar',data:{labels,datasets:[{data:bins,backgroundColor:col2,borderRadius:3}]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>`Freq: ${c.raw}`}}},
+      scales:{x:{ticks:{maxTicksLimit:8,font:{size:9}}},y:{beginAtZero:true,ticks:{font:{size:9}}}}
+    }
+  });
+
+  // I-Chart
+  if(CM_MODAL_CH.ic){ try{CM_MODAL_CH.ic.destroy();}catch(e){} }
+  const xb=st.xbar||arr.reduce((a,b)=>a+b,0)/n;
+  const MRs2=[]; for(let i=1;i<n;i++) MRs2.push(Math.abs(arr[i]-arr[i-1]));
+  const MRbar2=MRs2.length?MRs2.reduce((a,b)=>a+b,0)/MRs2.length:0;
+  const sw2=MRbar2/1.128;
+  const UCLi=xb+3*sw2, LCLi=xb-3*sw2;
+  const ptColors=arr.map(v=>(v>UCLi||v<LCLi)?'#dc2626':'#1a56db');
+  CM_MODAL_CH.ic = new Chart(document.getElementById('cmIC').getContext('2d'),{
+    type:'line',
+    data:{labels:arr.map((_,i)=>i+1),datasets:[
+      {label:'Obs.',data:arr,borderColor:'rgba(26,86,219,0.5)',backgroundColor:ptColors,
+       pointBackgroundColor:ptColors,pointBorderColor:ptColors,borderWidth:1.5,
+       pointRadius:arr.length>100?1.5:3,tension:0,order:2},
+      {label:`UCL`,data:arr.map(()=>UCLi),borderColor:'#dc2626',borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false,order:1},
+      {label:`x̄`,data:arr.map(()=>xb),borderColor:'#d97706',borderWidth:1.5,borderDash:[7,3],pointRadius:0,fill:false,order:1},
+      {label:`LCL`,data:arr.map(()=>LCLi),borderColor:'#dc2626',borderWidth:1.5,borderDash:[5,4],pointRadius:0,fill:false,order:1},
+    ]},
+    options:{responsive:true,maintainAspectRatio:false,animation:false,
+      plugins:{legend:{position:'bottom',labels:{font:{size:9},padding:8,boxWidth:12}}},
+      scales:{x:{ticks:{maxTicksLimit:12,font:{size:9}}},y:{ticks:{font:{size:9}}}}
+    }
+  });
+}
+
+function cmClose(){
+  document.getElementById('cmModal').classList.remove('open');
+  document.body.style.overflow = '';
+  _cmOpenStudyId = null;
+}
+function cmCloseIfBg(e){
+  if(e.target===document.getElementById('cmModal')) cmClose();
+}
+document.addEventListener('keydown',e=>{ if(e.key==='Escape') cmClose(); });
+
 function renderDashboard(){
+  if(_dashView==='clean'){ renderCMDash(); return; }
   const all = STUDIES.slice();
   const total = all.length;
   const cpks = all.map(s=>s.stats&&s.stats.Cpk).filter(v=>v!=null&&!isNaN(v));
@@ -2972,21 +3624,135 @@ function updateStatsTable(st){
 function updateChips(){
   const{data,lsl,usl,specType}=S;
   document.getElementById('dCount').textContent=data.length;
-  const html=data.map(v=>{
-    const out=(specType==='bilateral'&&lsl!=null&&v<lsl)||(specType==='bilateral'&&usl!=null&&v>usl)||
-              (specType==='usl-only'&&usl!=null&&v>usl)||(specType==='lsl-only'&&lsl!=null&&v<lsl);
-    return `<span class="chip${out?' out':''}">${v.toFixed(DEC)}</span>`;
+
+  // ── inline edit state ──
+  // (uses _editingIdx global set by startEditCell)
+
+  const isOut = v =>
+    (specType==='bilateral'&&((lsl!=null&&v<lsl)||(usl!=null&&v>usl)))||
+    (specType==='usl-only'&&usl!=null&&v>usl)||
+    (specType==='lsl-only'&&lsl!=null&&v<lsl);
+
+  const tbody = document.getElementById('dTableBody');
+  if(!data.length){
+    tbody.innerHTML='<tr><td colspan="3" style="text-align:center;padding:18px;color:var(--t3);font-style:italic;font-size:11px">Nenhum dado inserido</td></tr>';
+    const oos=document.getElementById('oosAlert');
+    oos.style.display='none';
+    return;
+  }
+
+  tbody.innerHTML = data.map((v,i)=>{
+    const out = isOut(v);
+    const rowBg = out ? 'rgba(254,226,226,0.5)' : (i%2===0?'transparent':'rgba(247,248,252,0.6)');
+    const valColor = out ? 'var(--fail)' : 'var(--t0)';
+    return `<tr id="drow-${i}" style="background:${rowBg};border-bottom:1px solid var(--s2);transition:background .12s">
+      <td style="padding:4px 8px;text-align:center;font-family:var(--mono);font-size:10px;color:var(--t3);user-select:none">${i+1}</td>
+      <td style="padding:4px 8px;text-align:right;font-family:var(--mono);font-size:12px;font-weight:600;color:${valColor}">
+        <span id="dval-${i}" ondblclick="startEditCell(${i})" title="Duplo clique para editar">${v.toFixed(DEC)}${out?' ⚠':''}</span>
+      </td>
+      <td style="padding:4px 8px;text-align:center">
+        <div style="display:flex;gap:3px;justify-content:center">
+          <button onclick="startEditCell(${i})" title="Editar"
+            style="width:22px;height:22px;border-radius:5px;border:1px solid var(--s3);background:var(--s0);color:var(--t2);cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;transition:all .12s"
+            onmouseover="this.style.background='var(--blue-l)';this.style.color='var(--blue)';this.style.borderColor='var(--blue-m)'"
+            onmouseout="this.style.background='var(--s0)';this.style.color='var(--t2)';this.style.borderColor='var(--s3)'">✎</button>
+          <button onclick="deleteDataAt(${i})" title="Excluir"
+            style="width:22px;height:22px;border-radius:5px;border:1px solid var(--s3);background:var(--s0);color:var(--t2);cursor:pointer;font-size:11px;display:flex;align-items:center;justify-content:center;transition:all .12s"
+            onmouseover="this.style.background='var(--fail-l)';this.style.color='var(--fail)';this.style.borderColor='var(--fail-b)'"
+            onmouseout="this.style.background='var(--s0)';this.style.color='var(--t2)';this.style.borderColor='var(--s3)'">✕</button>
+        </div>
+      </td>
+    </tr>`;
   }).join('');
-  document.getElementById('dChips').innerHTML=html;
-  const oos=data.filter(v=>{
-    if(specType==='bilateral') return (lsl!=null&&v<lsl)||(usl!=null&&v>usl);
-    if(specType==='usl-only') return usl!=null&&v>usl;
-    if(specType==='lsl-only') return lsl!=null&&v<lsl;
-    return false;
-  }).length;
+
+  const oosCount = data.filter(isOut).length;
   const w=document.getElementById('oosAlert');
-  if(oos>0){w.style.display='';w.textContent=`⚠ ${oos} valor(es) fora de especificação detectado(s)`;}
+  if(oosCount>0){w.style.display='';w.textContent=`⚠ ${oosCount} valor(es) fora de especificação detectado(s)`;}
   else w.style.display='none';
+}
+
+/* ── inline edit ── */
+let _editingIdx = null;
+
+function startEditCell(idx){
+  // commit any open edit first
+  if(_editingIdx !== null && _editingIdx !== idx) commitEdit(_editingIdx, false);
+
+  _editingIdx = idx;
+  const v = S.data[idx];
+  const cell = document.getElementById('dval-'+idx);
+  if(!cell) return;
+
+  cell.innerHTML = `<input id="dedit-${idx}" type="number" step="any" value="${v}"
+    style="width:90px;padding:3px 6px;border:1.5px solid var(--blue);border-radius:5px;
+           font-family:var(--mono);font-size:12px;font-weight:600;color:var(--t0);
+           background:var(--s0);box-shadow:0 0 0 3px var(--blue-l);outline:none;text-align:right"
+    onkeydown="handleEditKey(event,${idx})"
+    onblur="commitEdit(${idx},true)"
+    autofocus/>`;
+  const inp = document.getElementById('dedit-'+idx);
+  if(inp){ inp.focus(); inp.select(); }
+}
+
+function handleEditKey(e, idx){
+  if(e.key==='Enter'||e.key==='Tab'){
+    e.preventDefault();
+    commitEdit(idx, true);
+    // Move to next row on Enter/Tab
+    const next = idx+1;
+    if(next < S.data.length) setTimeout(()=>startEditCell(next), 30);
+  } else if(e.key==='Escape'){
+    commitEdit(idx, false);
+  }
+}
+
+function commitEdit(idx, apply){
+  const inp = document.getElementById('dedit-'+idx);
+  if(!inp){ _editingIdx=null; return; }
+  if(apply){
+    const newVal = parseFloat(inp.value);
+    if(!isNaN(newVal)){
+      S.data[idx] = newVal;
+      toast(`Valor #${idx+1} atualizado para ${newVal}`,'ok');
+      _editingIdx = null;
+      refresh();
+      return;
+    } else {
+      toast('Valor inválido — alteração cancelada','fail');
+    }
+  }
+  _editingIdx = null;
+  // re-render just the cell
+  const v = S.data[idx];
+  const cell = document.getElementById('dval-'+idx);
+  if(cell){
+    const{lsl,usl,specType}=S;
+    const out=(specType==='bilateral'&&((lsl!=null&&v<lsl)||(usl!=null&&v>usl)))||
+              (specType==='usl-only'&&usl!=null&&v>usl)||(specType==='lsl-only'&&lsl!=null&&v<lsl);
+    cell.innerHTML = v.toFixed(DEC)+(out?' ⚠':'');
+    cell.style.color = out?'var(--fail)':'var(--t0)';
+  }
+}
+
+function deleteDataAt(idx){
+  S.data.splice(idx,1);
+  toast(`Valor #${idx+1} removido`,'warn');
+  refresh();
+}
+
+function copyAllData(){
+  if(!S.data.length){ toast('Nenhum dado para copiar!','fail'); return; }
+  const text = S.data.map(v=>v.toFixed(DEC)).join('\n');
+  navigator.clipboard.writeText(text)
+    .then(()=>toast(`${S.data.length} valores copiados para a área de transferência!`,'ok'))
+    .catch(()=>{
+      // fallback
+      const ta=document.createElement('textarea');
+      ta.value=text; ta.style.position='fixed'; ta.style.opacity='0';
+      document.body.appendChild(ta); ta.select(); document.execCommand('copy');
+      document.body.removeChild(ta);
+      toast(`${S.data.length} valores copiados!`,'ok');
+    });
 }
 
 function updateTolInfo(){
@@ -3780,6 +4546,7 @@ function collectFormData(){
 
 function saveStudy(){
   if(S.data.length<2){toast('Insira pelo menos 2 dados antes de salvar!','fail');return;}
+  if(!window.FB){toast('Firebase não conectado. Aguarde.','fail');return;}
   const fd=collectFormData();
   const st=calcAll(S.data,S.lsl,S.usl,S.specType);
   const study={
@@ -3788,31 +4555,21 @@ function saveStudy(){
     ...fd,
     stats:{n:st.n,xbar:st.xbar,s:st.s,sw:st.sw,Cp:st.Cp,Cpk:st.Cpk,Pp:st.Pp,Ppk:st.Ppk,ppm:st.ppm,oos:st.oos,stable:st.stable}
   };
-
-  if(!window.FB){
-    toast('Firebase não conectado. Aguarde e tente novamente.','fail');
-    return;
-  }
-
   const syncEl=document.getElementById('dashSyncState');
-  if(syncEl){ syncEl.textContent='⬆ salvando…'; syncEl.style.color='var(--warn)'; }
-
-  // Firebase é a fonte única — salva diretamente no servidor
+  if(syncEl){syncEl.textContent='⬆ salvando…';syncEl.style.color='var(--warn)';}
   window.FB.saveStudy(study)
     .then(()=>{
       currentStudyId=study.id;
-      // localStorage apenas como backup temporário de UI (não é fonte primária)
       const local=JSON.parse(localStorage.getItem('spc_studies')||'[]');
       const idx=local.findIndex(s=>s.id===study.id);
-      if(idx>=0) local[idx]=study; else local.push(study);
+      if(idx>=0)local[idx]=study;else local.push(study);
       localStorage.setItem('spc_studies',JSON.stringify(local));
       toast(`Estudo "${fd.pname||'Sem nome'}" salvo no Firebase!`,'ok');
-      console.log('[FB] Salvo:', study.id);
     })
     .catch(e=>{
-      console.error('[FB] Erro ao salvar:', e);
-      toast('Erro ao salvar no Firebase. Verifique a conexão.','fail');
-      if(syncEl){ syncEl.textContent='● erro ao salvar'; syncEl.style.color='var(--fail)'; }
+      console.error('[FB] Erro ao salvar:',e);
+      toast('Erro ao salvar no Firebase.','fail');
+      if(syncEl){syncEl.textContent='● erro';syncEl.style.color='var(--fail)';}
     });
 }
 
@@ -3840,39 +4597,30 @@ function loadStudyToEditor(id){
 function deleteCurrentStudy(){
   if(!currentStudyId)return;
   if(!confirm('Excluir este estudo permanentemente?'))return;
-  if(!window.FB){ toast('Firebase não conectado.','fail'); return; }
+  if(!window.FB){toast('Firebase não conectado.','fail');return;}
   const delId=currentStudyId;
   window.FB.deleteStudy(delId)
     .then(()=>{
-      // Atualiza backup local após confirmação do servidor
       const local=JSON.parse(localStorage.getItem('spc_studies')||'[]');
       localStorage.setItem('spc_studies',JSON.stringify(local.filter(s=>s.id!==delId)));
       STUDIES=STUDIES.filter(s=>s.id!==delId);
-      currentStudyId=null;
-      closeModal();
-      renderStudiesList();
+      currentStudyId=null;closeModal();renderStudiesList();
       toast('Estudo excluído','warn');
     })
-    .catch(e=>{
-      console.error('[FB] Erro ao excluir:', e);
-      toast('Erro ao excluir no Firebase.','fail');
-    });
+    .catch(e=>{toast('Erro ao excluir no Firebase.','fail');});
 }
 
 async function clearAllStudies(){
   if(!confirm('Excluir TODOS os estudos salvos? Esta ação não pode ser desfeita.'))return;
-  if(!window.FB){ toast('Firebase não conectado.','fail'); return; }
-  const syncEl=document.getElementById('dashSyncState');
-  if(syncEl){ syncEl.textContent='⬆ excluindo…'; syncEl.style.color='var(--warn)'; }
-  let ok=0, fail=0;
+  if(!window.FB){toast('Firebase não conectado.','fail');return;}
+  let ok=0,fail=0;
   for(const s of [...STUDIES]){
-    try{ await window.FB.deleteStudy(s.id); ok++; }
-    catch(e){ fail++; console.warn('[FB] Falha ao excluir:', s.id, e); }
+    try{await window.FB.deleteStudy(s.id);ok++;}
+    catch(e){fail++;console.warn('[FB] Falha ao excluir:',s.id);}
   }
-  STUDIES=[];
-  localStorage.removeItem('spc_studies');
+  STUDIES=[];localStorage.removeItem('spc_studies');
   renderStudiesList();
-  toast(fail?`${ok} excluídos, ${fail} falhas`:'Todos os estudos foram removidos', fail?'warn':'warn');
+  toast(fail?`${ok} excluídos, ${fail} falhas`:'Todos os estudos removidos','warn');
 }
 
 /* ═══════════════════════════════════════════════
@@ -3955,81 +4703,63 @@ document.getElementById('studyModal').addEventListener('click',e=>{if(e.target==
 
 function deleteStudyById(id){
   if(!confirm('Excluir este estudo?'))return;
-  if(!window.FB){ toast('Firebase não conectado.','fail'); return; }
+  if(!window.FB){toast('Firebase não conectado.','fail');return;}
   window.FB.deleteStudy(id)
     .then(()=>{
       const local=JSON.parse(localStorage.getItem('spc_studies')||'[]');
       localStorage.setItem('spc_studies',JSON.stringify(local.filter(s=>s.id!==id)));
       STUDIES=STUDIES.filter(s=>s.id!==id);
-      renderStudiesList();
-      toast('Estudo excluído','warn');
+      renderStudiesList();toast('Estudo excluído','warn');
     })
-    .catch(e=>{
-      console.error('[FB] Erro ao excluir:', e);
-      toast('Erro ao excluir no Firebase.','fail');
-    });
+    .catch(e=>{toast('Erro ao excluir no Firebase.','fail');});
 }
 
 /* Força recarga do servidor — Firebase é a fonte única */
 async function forceFBSync(){
-  if(!window.FB){ toast('Firebase não conectado ainda. Aguarde…','warn'); return; }
-  const syncEl = document.getElementById('dashSyncState');
-  if(syncEl){ syncEl.textContent='🔄 recarregando do servidor…'; syncEl.style.color='var(--warn)'; }
-  try {
-    const serverStudies = await window.FB.getAll();
-    STUDIES = serverStudies.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
-    localStorage.setItem('spc_studies', JSON.stringify(STUDIES));
-    toast(`Firebase: ${STUDIES.length} estudo(s) carregado(s) do servidor`, 'ok');
-    if(syncEl){ syncEl.textContent='● online · '+STUDIES.length+' estudo(s)'; syncEl.style.color='var(--ok)'; }
-    if(document.getElementById('page-dashboard')?.classList.contains('active')) renderDashboard();
-    if(document.getElementById('page-studies')?.classList.contains('active')) renderStudiesList();
-  } catch(e) {
-    console.error('[FB] Falha ao recarregar:', e);
-    toast('Falha ao recarregar do Firebase.', 'fail');
-    if(syncEl){ syncEl.textContent='● erro de conexão'; syncEl.style.color='var(--fail)'; }
+  if(!window.FB){toast('Firebase não conectado ainda. Aguarde…','warn');return;}
+  const syncEl=document.getElementById('dashSyncState');
+  if(syncEl){syncEl.textContent='🔄 recarregando do servidor…';syncEl.style.color='var(--warn)';}
+  try{
+    const serverStudies=await window.FB.getAll();
+    STUDIES=serverStudies.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
+    localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
+    toast(`Firebase: ${STUDIES.length} estudo(s) carregado(s) do servidor`,'ok');
+    if(syncEl){syncEl.textContent='● online · '+STUDIES.length+' estudo(s)';syncEl.style.color='var(--ok)';}
+    if(document.getElementById('page-dashboard')?.classList.contains('active'))renderDashboard();
+    if(document.getElementById('page-studies')?.classList.contains('active'))renderStudiesList();
+  }catch(e){
+    console.error('[FB] Falha ao recarregar:',e);
+    toast('Falha ao recarregar do Firebase.','fail');
+    if(syncEl){syncEl.textContent='● erro de conexão';syncEl.style.color='var(--fail)';}
   }
 }
 
-/* ═══════════════════════════════════════════════
-   FIREBASE INIT — FONTE ÚNICA DA VERDADE
-   • Ao abrir: carrega do servidor (não do localStorage)
-   • Listener: só dispara com dados do servidor
-   • localStorage: atualizado como reflexo do Firebase, nunca como fonte
-═══════════════════════════════════════════════ */
+/* Firebase init — fonte única da verdade — sem localStorage como fonte */
 async function _fbInit(){
   if(!window.FB) return;
-  const syncEl = document.getElementById('dashSyncState');
-  if(syncEl){ syncEl.textContent='🔄 carregando do servidor…'; syncEl.style.color='var(--warn)'; }
-
-  // ── CARGA INICIAL: sempre do servidor ──
-  try {
-    const serverStudies = await window.FB.getAll();
-    // Firebase é a fonte única — descarta qualquer dado local que conflite
-    STUDIES = serverStudies.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
-    // Atualiza localStorage como reflexo (backup temporário, não fonte)
-    localStorage.setItem('spc_studies', JSON.stringify(STUDIES));
-    console.log('[FB] Carga inicial do servidor:', STUDIES.length, 'estudos');
-    if(syncEl){ syncEl.textContent='● online · '+STUDIES.length+' estudo(s)'; syncEl.style.color='var(--ok)'; }
-    if(document.getElementById('page-dashboard')?.classList.contains('active')) renderDashboard();
-    if(document.getElementById('page-studies')?.classList.contains('active')) renderStudiesList();
-  } catch(e) {
-    console.error('[FB] Falha na carga inicial:', e);
-    if(syncEl){ syncEl.textContent='● sem conexão'; syncEl.style.color='var(--fail)'; }
-    // NÃO usa localStorage como fallback — exibe lista vazia até reconectar
-    STUDIES = [];
-    if(document.getElementById('page-studies')?.classList.contains('active')) renderStudiesList();
+  const syncEl=document.getElementById('dashSyncState');
+  if(syncEl){syncEl.textContent='🔄 carregando do servidor…';syncEl.style.color='var(--warn)';}
+  try{
+    const srv=await window.FB.getAll();
+    STUDIES=srv.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
+    localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
+    console.log('[FB] Carga inicial do servidor:',STUDIES.length,'estudos');
+    if(syncEl){syncEl.textContent='● online · '+STUDIES.length+' estudo(s)';syncEl.style.color='var(--ok)';}
+    if(document.getElementById('page-dashboard')?.classList.contains('active'))renderDashboard();
+    if(document.getElementById('page-studies')?.classList.contains('active'))renderStudiesList();
+  }catch(e){
+    console.error('[FB] Falha na carga inicial:',e);
+    if(syncEl){syncEl.textContent='● sem conexão';syncEl.style.color='var(--fail)';}
+    STUDIES=[];
+    if(document.getElementById('page-studies')?.classList.contains('active'))renderStudiesList();
   }
-
-  // ── LISTENER TEMPO REAL: somente dados do servidor ──
   window.FB.listen(arr=>{
-    // arr já vem filtrado (apenas snapshots do servidor — ver window.FB.listen)
-    STUDIES = arr.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
-    // Espelha no localStorage como backup (não como fonte primária)
-    localStorage.setItem('spc_studies', JSON.stringify(STUDIES));
+    STUDIES=arr.sort((a,b)=>new Date(b.savedAt||0)-new Date(a.savedAt||0));
+    localStorage.setItem('spc_studies',JSON.stringify(STUDIES));
     const el=document.getElementById('dashSyncState');
-    if(el){ el.textContent='● online · '+STUDIES.length+' estudo(s) sincronizado(s)'; el.style.color='var(--ok)'; }
-    if(document.getElementById('page-dashboard')?.classList.contains('active')) renderDashboard();
-    if(document.getElementById('page-studies')?.classList.contains('active')) renderStudiesList();
+    if(el){el.textContent='● online · '+STUDIES.length+' estudo(s) sincronizado(s)';el.style.color='var(--ok)';}
+    if(document.getElementById('page-dashboard')?.classList.contains('active'))renderDashboard();
+    if(document.getElementById('page-studies')?.classList.contains('active'))renderStudiesList();
   });
 }
 
