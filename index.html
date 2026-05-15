@@ -1593,6 +1593,11 @@ body{
       <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor"><path d="M2 2h7l2 2v7H2V2zm5 6H6V6h1v2zm1-6H4v3h4V2z"/></svg>
       Salvar Estudo
     </button>
+    <button id="btnSaveAsNew" class="btn btn-warn btn-sm" onclick="saveStudyAsNew()" style="display:none" title="Salva como um novo estudo separado, preservando o original">
+      <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor"><path d="M2 2h7l2 2v7H2V2zm5 6H6V6h1v2zm1-6H4v3h4V2z"/><circle cx="10" cy="10" r="3" fill="var(--warn)"/><text x="10" y="13" text-anchor="middle" font-size="5" fill="white" font-weight="bold">+</text></svg>
+      Salvar como Cópia
+    </button>
+    <span id="editingStudyBadge" style="display:none;font-size:10px;font-weight:700;padding:3px 9px;border-radius:4px;background:var(--warn-l);color:var(--warn);border:1px solid var(--warn-b);white-space:nowrap">✏ Editando cópia</span>
     <button class="btn btn-ghost btn-sm" onclick="printReport()">
       <svg width="13" height="13" viewBox="0 0 13 13" fill="currentColor"><path d="M3 1h7v3H3V1zM1 5h11v5H9v2H4V10H1V5zm2 1v3h1V6H3zm7 0v3h1V6h-1z"/></svg>
       Imprimir
@@ -4780,6 +4785,10 @@ function resetAll(){
   document.getElementById('iSpecType').value='bilateral';
   document.getElementById('iDate').value=new Date().toISOString().slice(0,10);
   clearVisuals();updateChips();updateTolInfo();updateStudyHeader();
+  const _rBtnCopy=document.getElementById('btnSaveAsNew');
+  const _rEditBadge=document.getElementById('editingStudyBadge');
+  if(_rBtnCopy) _rBtnCopy.style.display='none';
+  if(_rEditBadge) _rEditBadge.style.display='none';
   toast('Dashboard resetado','warn');
 }
 
@@ -4793,6 +4802,11 @@ function newStudy(btn){
   const stEl=document.getElementById('iSpecType');if(stEl)stEl.value='bilateral';
   const dEl=document.getElementById('iDate');if(dEl)dEl.value=new Date().toISOString().slice(0,10);
   try{clearVisuals();updateChips();updateTolInfo();updateStudyHeader();}catch(e){}
+  // Ocultar badge e botão de cópia ao criar novo estudo
+  const _btnCopy=document.getElementById('btnSaveAsNew');
+  const _editBadge=document.getElementById('editingStudyBadge');
+  if(_btnCopy) _btnCopy.style.display='none';
+  if(_editBadge) _editBadge.style.display='none';
   showPage('analysis',btn);
   toast('Novo estudo iniciado','ok');
 }
@@ -4847,6 +4861,40 @@ function saveStudy(){
     });
 }
 
+/* Salva como NOVO estudo independente, sem sobrescrever o original */
+function saveStudyAsNew(){
+  if(S.data.length<2){toast('Insira pelo menos 2 dados antes de salvar!','fail');return;}
+  if(!window.FB){toast('Firebase não conectado. Aguarde.','fail');return;}
+  const fd=collectFormData();
+  const st=calcAll(S.data,S.lsl,S.usl,S.specType);
+  const newId='S'+Date.now();
+  const study={
+    id:newId,
+    savedAt:new Date().toISOString(),
+    ...fd,
+    stats:{n:st.n,xbar:st.xbar,s:st.s,sw:st.sw,Cp:st.Cp,Cpk:st.Cpk,Pp:st.Pp,Ppk:st.Ppk,ppm:st.ppm,oos:st.oos,stable:st.stable}
+  };
+  const syncEl=document.getElementById('dashSyncState');
+  if(syncEl){syncEl.textContent='⬆ salvando…';syncEl.style.color='var(--warn)';}
+  window.FB.saveStudy(study)
+    .then(()=>{
+      // Atualiza currentStudyId para o novo — a partir daqui "Salvar" atualiza a cópia
+      currentStudyId=newId;
+      const local=JSON.parse(localStorage.getItem('spc_studies')||'[]');
+      local.push(study);
+      localStorage.setItem('spc_studies',JSON.stringify(local));
+      // Atualiza badge para refletir que agora estamos no novo estudo
+      const badge=document.getElementById('editingStudyBadge');
+      if(badge)badge.textContent=`✏ Editando: ${fd.pname||'Sem nome'}`;
+      toast(`Cópia "${fd.pname||'Sem nome'}" salva como novo estudo!`,'ok');
+    })
+    .catch(e=>{
+      console.error('[FB] Erro ao salvar cópia:',e);
+      toast('Erro ao salvar cópia no Firebase.','fail');
+      if(syncEl){syncEl.textContent='● erro';syncEl.style.color='var(--fail)';}
+    });
+}
+
 function loadStudyToEditor(id){
   const sid=id||currentStudyId;
   const study=STUDIES.find(s=>s.id===sid);
@@ -4865,6 +4913,11 @@ function loadStudyToEditor(id){
   refresh();
   showPage('analysis',document.querySelectorAll('.nav-tab')[1]);
   closeModal();
+  // Mostrar botão "Salvar como Cópia" e badge de edição
+  const btnCopy=document.getElementById('btnSaveAsNew');
+  const editBadge=document.getElementById('editingStudyBadge');
+  if(btnCopy) btnCopy.style.display='';
+  if(editBadge){ editBadge.style.display=''; editBadge.textContent=`✏ Editando: ${study.pname||'Sem nome'}`; }
   toast(`Estudo "${study.pname}" carregado para edição!`,'ok');
 }
 
