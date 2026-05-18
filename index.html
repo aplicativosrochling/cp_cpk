@@ -3893,7 +3893,7 @@ function updateStatsTable(st){
   R.push(row('PPM Estimado (teórico)',st.ppm!=null?st.ppm.toFixed(2):'—','< 3.4 → 6σ','Estimativa baseada na distribuição normal. Para PPM real, usar dados históricos.',st.ppm!=null?(st.ppm<233?mkBadge('Excelente','ok'):st.ppm<6210?mkBadge('Aceitável','warn'):mkBadge('Alto','fail')):mkBadge('—','dim')));
 
   document.getElementById('statsTBody').innerHTML=R.join('');
-  document.getElementById('tableTs').textContent='Atualizado: '+new Date().toLocaleString('pt-BR');
+  document.getElementById('tableTs').textContent='Atualizado: '+new Date().toLocaleDateString('pt-BR');
 }
 
 function updateChips(){
@@ -4974,7 +4974,7 @@ function renderStudiesList(){
     const st=s.stats;
     const cls=st.Cpk==null?'':st.Cpk>=1.67?'ok':st.Cpk>=1.33?'warn':'fail';
     const kColor=cls==='ok'?'var(--ok)':cls==='warn'?'var(--warn)':'var(--fail)';
-    const savedDate=new Date(s.savedAt).toLocaleString('pt-BR');
+    const savedDate=new Date(s.savedAt).toLocaleDateString('pt-BR');
     return`<div class="study-card" onclick="openStudyModal('${s.id}')">
       <div class="study-card-top">
         <div>
@@ -5190,7 +5190,7 @@ function printReport(){
   const data         = S.data;
   const n            = data.length;
 
-  pfDate.textContent = 'Emitido em: ' + new Date().toLocaleString('pt-BR');
+  pfDate.textContent = 'Emitido em: ' + new Date().toLocaleDateString('pt-BR');
 
   // Calc out-of-spec mask
   const isOut = v =>
@@ -5311,7 +5311,7 @@ async function buildPDF(pd){
   const st=calcAll(pd.data,pd.lsl,pd.usl,pd.specType);
   const fv=(v,d)=>v==null||isNaN(v)?'—':Number(v).toFixed(d!=null?d:pd.dec);
   const fi=v=>fv(v,3);
-  const now=new Date().toLocaleString('pt-BR');
+  const now=new Date().toLocaleDateString('pt-BR');
   const capC=v=>v==null?[150,153,184]:v>=1.67?[5,150,105]:v>=1.33?[217,119,6]:[220,38,38];
 
   // ── Background — subtle warm white
